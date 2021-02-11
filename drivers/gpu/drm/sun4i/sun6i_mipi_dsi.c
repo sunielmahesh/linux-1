@@ -21,6 +21,7 @@
 
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_mipi_dsi.h>
+#include <drm/drm_of.h>
 #include <drm/drm_panel.h>
 #include <drm/drm_print.h>
 #include <drm/drm_probe_helper.h>
@@ -963,10 +964,14 @@ static int sun6i_dsi_attach(struct mipi_dsi_host *host,
 			    struct mipi_dsi_device *device)
 {
 	struct sun6i_dsi *dsi = host_to_sun6i_dsi(host);
-	struct drm_panel *panel = of_drm_find_panel(device->dev.of_node);
+	struct drm_panel *panel;
+	int ret;
 
-	if (IS_ERR(panel))
-		return PTR_ERR(panel);
+	ret = drm_of_find_panel_or_bridge(dsi->dev->of_node, 0, 0,
+					  &panel, NULL);
+	if (ret)
+		return ret;
+
 	if (!dsi->drm || !dsi->drm->registered)
 		return -EPROBE_DEFER;
 
