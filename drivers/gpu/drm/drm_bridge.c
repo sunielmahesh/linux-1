@@ -191,9 +191,9 @@ int drm_bridge_attach(struct drm_encoder *encoder, struct drm_bridge *bridge,
 	bridge->encoder = encoder;
 
 	if (previous)
-		list_add(&bridge->chain_node, &previous->chain_node);
+		list_add_tail(&bridge->chain_node, &previous->chain_node);
 	else
-		list_add(&bridge->chain_node, &encoder->bridge_chain);
+		list_add_tail(&bridge->chain_node, &encoder->bridge_chain);
 
 	if (bridge->funcs->attach) {
 		ret = bridge->funcs->attach(bridge, flags);
