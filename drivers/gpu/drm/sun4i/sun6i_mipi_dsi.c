@@ -773,6 +773,9 @@ static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
 	if (dsi->panel)
 		drm_panel_prepare(dsi->panel);
 
+	if (dsi->panel_bridge)
+		dsi->panel_bridge->funcs->pre_enable(dsi->panel_bridge);
+
 	/*
 	 * FIXME: This should be moved after the switch to HS mode.
 	 *
@@ -787,6 +790,9 @@ static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
 	 */
 	if (dsi->panel)
 		drm_panel_enable(dsi->panel);
+
+	if (dsi->panel_bridge)
+		dsi->panel_bridge->funcs->enable(dsi->panel_bridge);
 
 	sun6i_dsi_start(dsi, DSI_START_HSC);
 
@@ -804,6 +810,9 @@ static void sun6i_dsi_encoder_disable(struct drm_encoder *encoder)
 	if (dsi->panel) {
 		drm_panel_disable(dsi->panel);
 		drm_panel_unprepare(dsi->panel);
+	} else if (dsi->panel_bridge) {
+		dsi->panel_bridge->funcs->disable(dsi->panel_bridge);
+		dsi->panel_bridge->funcs->post_disable(dsi->panel_bridge);
 	}
 
 	phy_power_off(dsi->dphy);
@@ -964,23 +973,17 @@ static int sun6i_dsi_attach(struct mipi_dsi_host *host,
 			    struct mipi_dsi_device *device)
 {
 	struct sun6i_dsi *dsi = host_to_sun6i_dsi(host);
-	struct drm_panel *panel;
 	int ret;
 
 	ret = drm_of_find_panel_or_bridge(dsi->dev->of_node, 0, 0,
-					  &panel, NULL);
+					  &dsi->panel, &dsi->panel_bridge);
 	if (ret)
 		return ret;
 
-	if (!dsi->drm || !dsi->drm->registered)
-		return -EPROBE_DEFER;
-
-	dsi->panel = panel;
 	dsi->device = device;
 
-	drm_kms_helper_hotplug_event(dsi->drm);
-
-	dev_info(host->dev, "Attached device %s\n", device->name);
+	dev_info(host->dev, "Attached %s %s\n",
+		 device->name, dsi->panel ? "panel" : "bridge");
 
 	return 0;
 }
@@ -991,9 +994,10 @@ static int sun6i_dsi_detach(struct mipi_dsi_host *host,
 	struct sun6i_dsi *dsi = host_to_sun6i_dsi(host);
 
 	dsi->panel = NULL;
+	dsi->panel_bridge = NULL;
 	dsi->device = NULL;
 
-	drm_kms_helper_hotplug_event(dsi->drm);
+	drm_of_panel_bridge_remove(dsi->dev->of_node, 0, 0);
 
 	return 0;
 }
@@ -1082,7 +1086,13 @@ static int sun6i_dsi_bind(struct device *dev, struct device *master,
 
 	drm_connector_attach_encoder(&dsi->connector, &dsi->encoder);
 
-	dsi->drm = drm;
+	if (dsi->panel_bridge) {
+		ret = drm_bridge_attach(&dsi->encoder, dsi->panel_bridge, NULL, 0);
+		if (ret) {
+			dev_err(dsi->dev, "Couldn't attach drm bridge\n");
+			goto err_cleanup_connector;
+		}
+	}
 
 	return 0;
 
@@ -1096,7 +1106,7 @@ static void sun6i_dsi_unbind(struct device *dev, struct device *master,
 {
 	struct sun6i_dsi *dsi = dev_get_drvdata(dev);
 
-	dsi->drm = NULL;
+	drm_encoder_cleanup(&dsi->encoder);
 }
 
 static const struct component_ops sun6i_dsi_ops = {
