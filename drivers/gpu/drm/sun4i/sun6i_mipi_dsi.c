@@ -714,7 +714,7 @@ static int sun6i_dsi_start(struct sun6i_dsi *dsi,
 	return 0;
 }
 
-static void sun6i_dsi_bridge_enable(struct drm_bridge *bridge)
+static void sun6i_dsi_bridge_pre_enable(struct drm_bridge *bridge)
 {
 	struct drm_display_mode *mode = &bridge->encoder->crtc->state->adjusted_mode;
 	struct sun6i_dsi *dsi = bridge_to_sun6i_dsi(bridge);
@@ -775,6 +775,11 @@ static void sun6i_dsi_bridge_enable(struct drm_bridge *bridge)
 
 	if (dsi->panel_bridge)
 		dsi->panel_bridge->funcs->pre_enable(dsi->panel_bridge);
+}
+
+static void sun6i_dsi_bridge_enable(struct drm_bridge *bridge)
+{
+	struct sun6i_dsi *dsi = bridge_to_sun6i_dsi(bridge);
 
 	/*
 	 * FIXME: This should be moved after the switch to HS mode.
@@ -883,6 +888,7 @@ err_cleanup_connector:
 }
 
 static const struct drm_bridge_funcs sun6i_dsi_bridge_funcs = {
+	.pre_enable	= sun6i_dsi_bridge_pre_enable,
 	.enable		= sun6i_dsi_bridge_enable,
 	.disable	= sun6i_dsi_bridge_disable,
 	.attach		= sun6i_dsi_bridge_attach,
