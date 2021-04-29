@@ -212,6 +212,16 @@ static const char *const clk_names[5] = { "bus_clk", "sclk_mipi",
 	"phyclk_mipidphy0_bitclkdiv8", "phyclk_mipidphy0_rxclkesc0",
 	"sclk_rgb_vclk_to_dsim0" };
 
+/* used for CEA standard modes */
+struct dsim_hblank_par {
+	char *name;		/* drm display mode name */
+	int vrefresh;
+	int hfp_wc;
+	int hbp_wc;
+	int hsa_wc;
+	int lanes;
+};
+
 enum samsung_dsim_transfer_type {
 	EXYNOS_DSI_TX,
 	EXYNOS_DSI_RX,
@@ -345,6 +355,88 @@ static const unsigned int exynos5433_reg_ofs[] = {
 	[DSIM_PHYTIMING1_REG] = 0xB8,
 	[DSIM_PHYTIMING2_REG] = 0xBC,
 };
+
+#define DSIM_HBLANK_PARAM(nm, vf, hfp, hbp, hsa, num)	\
+	.name	  = (nm),				\
+	.vrefresh = (vf),				\
+	.hfp_wc   = (hfp),				\
+	.hbp_wc   = (hbp),				\
+	.hsa_wc   = (hsa),				\
+	.lanes	  = (num)
+
+static const struct dsim_hblank_par hblank_4lanes[] = {
+	/* {  88, 148, 44 } */
+	{ DSIM_HBLANK_PARAM("1920x1080", 60,  60, 105,  27, 4), },
+	/* { 528, 148, 44 } */
+	{ DSIM_HBLANK_PARAM("1920x1080", 50, 390, 105,  27, 4), },
+	/* {  88, 148, 44 } */
+	{ DSIM_HBLANK_PARAM("1920x1080", 30,  60, 105,  27, 4), },
+	/* { 110, 220, 40 } */
+	{ DSIM_HBLANK_PARAM("1280x720" , 60,  78, 159,  24, 4), },
+	/* { 440, 220, 40 } */
+	{ DSIM_HBLANK_PARAM("1280x720" , 50, 324, 159,  24, 4), },
+	/* {  16,  60, 62 } */
+	{ DSIM_HBLANK_PARAM("720x480"  , 60,   6,  39,  40, 4), },
+	/* {  12,  68, 64 } */
+	{ DSIM_HBLANK_PARAM("720x576"  , 50,   3,  45,  42, 4), },
+	/* {  16,  48, 96 } */
+	{ DSIM_HBLANK_PARAM("640x480"  , 60,   6,  30,  66, 4), },
+};
+
+static const struct dsim_hblank_par hblank_2lanes[] = {
+	/* {  88, 148, 44 } */
+	{ DSIM_HBLANK_PARAM("1920x1080", 30, 114, 210,  60, 2), },
+	/* { 110, 220, 40 } */
+	{ DSIM_HBLANK_PARAM("1280x720" , 60, 159, 320,  40, 2), },
+	/* { 440, 220, 40 } */
+	{ DSIM_HBLANK_PARAM("1280x720" , 50, 654, 320,  40, 2), },
+	/* {  16,  60, 62 } */
+	{ DSIM_HBLANK_PARAM("720x480"  , 60,  16,  66,  88, 2), },
+	/* {  12,  68, 64 } */
+	{ DSIM_HBLANK_PARAM("720x576"  , 50,  12,  96,  72, 2), },
+	/* {  16,  48, 96 } */
+	{ DSIM_HBLANK_PARAM("640x480"  , 60,  18,  66, 138, 2), },
+};
+
+static const struct dsim_hblank_par *sec_mipi_dsim_get_hblank_par(const char *name,
+								  int vrefresh,
+								  int lanes)
+{
+	int i, size;
+	const struct dsim_hblank_par *hpar, *hblank;
+
+	if (unlikely(!name))
+		return NULL;
+
+	switch (lanes) {
+	case 2:
+		hblank = hblank_2lanes;
+		size   = ARRAY_SIZE(hblank_2lanes);
+		break;
+	case 4:
+		hblank = hblank_4lanes;
+		size   = ARRAY_SIZE(hblank_4lanes);
+		break;
+	default:
+		pr_err("No hblank data for mode %s with %d lanes\n",
+		       name, lanes);
+		return NULL;
+	}
+
+	for (i = 0; i < size; i++) {
+		hpar = &hblank[i];
+
+		if (!strcmp(name, hpar->name)) {
+			if (vrefresh != hpar->vrefresh)
+				continue;
+
+			/* found */
+			return hpar;
+		}
+	}
+
+	return NULL;
+}
 
 static inline void samsung_dsim_write(struct samsung_dsim *dsi,
 				      enum reg_idx idx, u32 val)
@@ -741,11 +833,16 @@ static int samsung_dsim_init_link(struct samsung_dsim *dsi)
 static void samsung_dsim_set_display_mode(struct samsung_dsim *dsi)
 {
 	struct drm_display_mode *m = &dsi->mode;
+	const struct dsim_hblank_par *hpar = NULL;
 	unsigned int num_bits_resol = dsi->driver_data->num_bits_resol;
 	int bpp;
 	u32 reg, hfp, hbp, hsa;
 
 	if (dsi->mode_flags & MIPI_DSI_MODE_VIDEO) {
+		if (dsi->mode_flags & MIPI_DSI_MODE_VIDEO_SYNC_PULSE)
+			hpar = sec_mipi_dsim_get_hblank_par(m->name,
+				drm_mode_vrefresh(m), dsi->lanes);
+
 		bpp = mipi_dsi_pixel_format_to_bpp(dsi->format) / 8;
 
 		reg = DSIM_CMD_ALLOW(0xf)
@@ -753,14 +850,32 @@ static void samsung_dsim_set_display_mode(struct samsung_dsim *dsi)
 			| DSIM_MAIN_VBP(m->vtotal - m->vsync_end);
 		samsung_dsim_write(dsi, DSIM_MVPORCH_REG, reg);
 
-		hfp = DIV_ROUND_UP((m->hsync_start - m->hdisplay) * bpp, dsi->lanes);
-		hfp -= (hfp > DSI_HSYNC_PKT_OVERHEAD) ? DSI_HSYNC_PKT_OVERHEAD : 0;
+		if (hpar)
+			hfp  = hpar->hfp_wc;
+		else {
+			hfp = DIV_ROUND_UP((m->hsync_start - m->hdisplay) * bpp,
+					   dsi->lanes);
+			hfp -= (hfp > DSI_HSYNC_PKT_OVERHEAD) ?
+				DSI_HSYNC_PKT_OVERHEAD : 0;
+		}
 
-		hbp = DIV_ROUND_UP((m->htotal - m->hsync_end) * bpp, dsi->lanes);
-		hbp -= (hbp > DSI_HSYNC_PKT_OVERHEAD) ? DSI_HSYNC_PKT_OVERHEAD : 0;
+		if (hpar)
+			hbp  = hpar->hbp_wc;
+		else {
+			hbp = DIV_ROUND_UP((m->htotal - m->hsync_end) * bpp,
+					   dsi->lanes);
+			hbp -= (hbp > DSI_HSYNC_PKT_OVERHEAD) ?
+				DSI_HSYNC_PKT_OVERHEAD : 0;
+		}
 
-		hsa = DIV_ROUND_UP((m->hsync_end - m->hsync_start) * bpp, dsi->lanes);
-		hsa -= (hsa > DSI_HSYNC_PKT_OVERHEAD) ? DSI_HSYNC_PKT_OVERHEAD : 0;
+		if (hpar)
+			hsa  = hpar->hsa_wc;
+		else {
+			hsa = DIV_ROUND_UP((m->hsync_end - m->hsync_start) * bpp,
+					   dsi->lanes);
+			hsa -= (hsa > DSI_HSYNC_PKT_OVERHEAD) ?
+				DSI_HSYNC_PKT_OVERHEAD : 0;
+		}
 
 		reg = DSIM_MAIN_HFP(hfp) | DSIM_MAIN_HBP(hbp);
 		samsung_dsim_write(dsi, DSIM_MHPORCH_REG, reg);
