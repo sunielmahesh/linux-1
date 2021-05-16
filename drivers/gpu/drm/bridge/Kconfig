@@ -127,6 +127,22 @@ config DRM_PARADE_PS8622
 	help
 	  Parade eDP-LVDS bridge chip driver.
 
+config DRM_SEC_MIPI_DSIM
+        tristate "Samsung SEC MIPI DSIM Bridge controller"
+        depends on DRM
+        depends on COMMON_CLK
+        depends on OF && HAS_IOMEM
+        select DRM_KMS_HELPER
+        select DRM_MIPI_DSI
+        select DRM_PANEL_BRIDGE
+        select GENERIC_PHY_MIPI_DPHY
+        select MFD_SYSCON
+        select MULTIPLEXER
+        select REGMAP_MMIO
+        help
+          This enables the Northwest Logic MIPI DSI Host controller as
+          for example found on NXP's i.MX8 Processors.
+
 config DRM_PARADE_PS8640
 	tristate "Parade PS8640 MIPI DSI to eDP Converter"
 	depends on OF
@@ -256,6 +272,26 @@ config DRM_TI_SN65DSI86
 	select DRM_MIPI_DSI
 	help
 	  Texas Instruments SN65DSI86 DSI to eDP Bridge driver
+
+config DRM_TI_SN65DSI8X
+        tristate "TI SN65DSI83/84/85 DSI to LVDS bridge"
+        depends on OF
+        select DRM_KMS_HELPER
+        select DRM_MIPI_DSI
+        select DRM_PANEL_BRIDGE
+        select REGMAP_I2C
+        help
+          SN65DSI83/84/85 devices are MIPI DSI to LVDS based bridge controller
+          IC's from Texas Instruments.
+
+          SN65DSI83 - Single Channel DSI to Single-link LVDS bridge
+          SN65DSI84 - Single Channel DSI to Dual-link LVDS bridge
+          SN65DSI85 - Dual Channel DSI to Dual-link LVDS bridge
+
+          Bridge decodes MIPI DSI 18bpp RGB666 and 240bpp RG888 packets and
+          converts the formatted video data stream to a FlatLink compatible
+          LVDS output operating at pixel clocks operating from 25 MHx to
+          154 MHz.
 
 config DRM_TI_TPD12S015
 	tristate "TI TPD12S015 HDMI level shifter and ESD protection"
