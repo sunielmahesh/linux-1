@@ -431,6 +431,216 @@ static const struct regmap_config sec_dsim_regmap_config = {
 	.name = "sec-dsim",
 };
 
+static void __maybe_unused sec_mipi_dsim_irq_mask(struct sec_mipi_dsim *dsim,
+						  int irq_idx)
+{
+	uint32_t intmsk;
+
+	intmsk = dsim_read(dsim, DSIM_INTMSK);
+
+	switch (irq_idx) {
+	case PLLSTABLE:
+		intmsk |= INTMSK_MSKPLLSTABLE;
+		break;
+	case SWRSTRELEASE:
+		intmsk |= INTMSK_MSKSWRELEASE;
+		break;
+	case SFRPLFIFOEMPTY:
+		intmsk |= INTMSK_MSKSFRPLFIFOEMPTY;
+		break;
+	case SFRPHFIFOEMPTY:
+		intmsk |= INTMSK_MSKSFRPHFIFOEMPTY;
+		break;
+	case FRAMEDONE:
+		intmsk |= INTMSK_MSKFRAMEDONE;
+		break;
+	case LPDRTOUT:
+		intmsk |= INTMSK_MSKLPDRTOUT;
+		break;
+	case TATOUT:
+		intmsk |= INTMSK_MSKTATOUT;
+		break;
+	case RXDATDONE:
+		intmsk |= INTMSK_MSKRXDATDONE;
+		break;
+	case RXTE:
+		intmsk |= INTMSK_MSKRXTE;
+		break;
+	case RXACK:
+		intmsk |= INTMSK_MSKRXACK;
+		break;
+	default:
+		/* unsupported irq */
+		return;
+	}
+
+	dsim_write(dsim, intmsk, DSIM_INTMSK);
+}
+
+static void sec_mipi_dsim_irq_unmask(struct sec_mipi_dsim *dsim,
+				     int irq_idx)
+{
+	uint32_t intmsk;
+
+	intmsk = dsim_read(dsim, DSIM_INTMSK);
+
+	switch (irq_idx) {
+	case PLLSTABLE:
+		intmsk &= ~INTMSK_MSKPLLSTABLE;
+		break;
+	case SWRSTRELEASE:
+		intmsk &= ~INTMSK_MSKSWRELEASE;
+		break;
+	case SFRPLFIFOEMPTY:
+		intmsk &= ~INTMSK_MSKSFRPLFIFOEMPTY;
+		break;
+	case SFRPHFIFOEMPTY:
+		intmsk &= ~INTMSK_MSKSFRPHFIFOEMPTY;
+		break;
+	case FRAMEDONE:
+		intmsk &= ~INTMSK_MSKFRAMEDONE;
+		break;
+	case LPDRTOUT:
+		intmsk &= ~INTMSK_MSKLPDRTOUT;
+		break;
+	case TATOUT:
+		intmsk &= ~INTMSK_MSKTATOUT;
+		break;
+	case RXDATDONE:
+		intmsk &= ~INTMSK_MSKRXDATDONE;
+		break;
+	case RXTE:
+		intmsk &= ~INTMSK_MSKRXTE;
+		break;
+	case RXACK:
+		intmsk &= ~INTMSK_MSKRXACK;
+		break;
+	default:
+		/* unsupported irq */
+		return;
+	}
+
+	dsim_write(dsim, intmsk, DSIM_INTMSK);
+}
+
+/* write 1 clear irq */
+static void sec_mipi_dsim_irq_clear(struct sec_mipi_dsim *dsim,
+				    int irq_idx)
+{
+	uint32_t intsrc = 0;
+
+	switch (irq_idx) {
+	case PLLSTABLE:
+		intsrc |= INTSRC_PLLSTABLE;
+		break;
+	case SWRSTRELEASE:
+		intsrc |= INTSRC_SWRSTRELEASE;
+		break;
+	case SFRPLFIFOEMPTY:
+		intsrc |= INTSRC_SFRPLFIFOEMPTY;
+		break;
+	case SFRPHFIFOEMPTY:
+		intsrc |= INTSRC_SFRPHFIFOEMPTY;
+		break;
+	case FRAMEDONE:
+		intsrc |= INTSRC_FRAMEDONE;
+		break;
+	case LPDRTOUT:
+		intsrc |= INTSRC_LPDRTOUT;
+		break;
+	case TATOUT:
+		intsrc |= INTSRC_TATOUT;
+		break;
+	case RXDATDONE:
+		intsrc |= INTSRC_RXDATDONE;
+		break;
+	case RXTE:
+		intsrc |= INTSRC_RXTE;
+		break;
+	case RXACK:
+		intsrc |= INTSRC_RXACK;
+		break;
+	default:
+		/* unsupported irq */
+		return;
+	}
+
+	dsim_write(dsim, intsrc, DSIM_INTSRC);
+}
+
+static void sec_mipi_dsim_irq_init(struct sec_mipi_dsim *dsim)
+{
+	sec_mipi_dsim_irq_unmask(dsim, PLLSTABLE);
+	sec_mipi_dsim_irq_unmask(dsim, SWRSTRELEASE);
+}
+
+static irqreturn_t sec_mipi_dsim_irq_handler(int irq, void *data)
+{
+	uint32_t intsrc, status;
+	struct sec_mipi_dsim *dsim = data;
+
+	intsrc = dsim_read(dsim, DSIM_INTSRC);
+	status = dsim_read(dsim, DSIM_STATUS);
+
+	if (WARN_ON(!intsrc)) {
+		dev_err(dsim->dev, "interrupt is not from dsim\n");
+		return IRQ_NONE;
+	}
+
+	if (WARN_ON(!(intsrc & INTSRC_MASK))) {
+		dev_warn(dsim->dev, "unenable irq happens: %#x\n", intsrc);
+		/* just clear irqs */
+		dsim_write(dsim, intsrc, DSIM_INTSRC);
+		return IRQ_NONE;
+	}
+
+	if (intsrc & INTSRC_PLLSTABLE) {
+		WARN_ON(!(status & STATUS_PLLSTABLE));
+		sec_mipi_dsim_irq_clear(dsim, PLLSTABLE);
+		complete(&dsim->pll_stable);
+	}
+
+	if (intsrc & INTSRC_SWRSTRELEASE)
+		sec_mipi_dsim_irq_clear(dsim, SWRSTRELEASE);
+
+	if (intsrc & INTSRC_SFRPLFIFOEMPTY) {
+		sec_mipi_dsim_irq_clear(dsim, SFRPLFIFOEMPTY);
+		complete(&dsim->pl_tx_done);
+	}
+
+	if (intsrc & INTSRC_SFRPHFIFOEMPTY) {
+		sec_mipi_dsim_irq_clear(dsim, SFRPHFIFOEMPTY);
+		complete(&dsim->ph_tx_done);
+	}
+
+	if (WARN_ON(intsrc & INTSRC_LPDRTOUT)) {
+		sec_mipi_dsim_irq_clear(dsim, LPDRTOUT);
+		dev_warn(dsim->dev, "LP RX timeout\n");
+	}
+
+	if (WARN_ON(intsrc & INTSRC_TATOUT)) {
+		sec_mipi_dsim_irq_clear(dsim, TATOUT);
+		dev_warn(dsim->dev, "Turns around Acknowledge timeout\n");
+	}
+
+	if (intsrc & INTSRC_RXDATDONE) {
+		sec_mipi_dsim_irq_clear(dsim, RXDATDONE);
+		complete(&dsim->rx_done);
+	}
+
+	if (intsrc & INTSRC_RXTE) {
+		sec_mipi_dsim_irq_clear(dsim, RXTE);
+		dev_dbg(dsim->dev, "TE Rx trigger received\n");
+	}
+
+	if (intsrc & INTSRC_RXACK) {
+		sec_mipi_dsim_irq_clear(dsim, RXACK);
+		dev_dbg(dsim->dev, "ACK Rx trigger received\n");
+	}
+
+	return IRQ_HANDLED;
+}
+
 #define DSIM_HBLANK_PARAM(nm, vf, hfp, hbp, hsa, num)	\
 	.name	  = (nm),				\
 	.vrefresh = (vf),				\
@@ -808,6 +1018,7 @@ static int sec_mipi_dsim_bridge_attach(struct drm_bridge *bridge,
 	struct drm_panel *panel;
 	int ret;
 
+	dev_info(dsim->dev, "%s In!\n", __func__);
 	ret = drm_of_find_panel_or_bridge(dsim->dev->of_node, 1, 0, &panel,
 					  &panel_bridge);
 	if (ret)
@@ -1295,6 +1506,8 @@ static void sec_mipi_dsim_bridge_enable(struct drm_bridge *bridge)
 	int ret;
 	struct sec_mipi_dsim *dsim = bridge_to_dsim(bridge);
 
+	dev_info(dsim->dev, "%s In!\n", __func__);
+
 	request_bus_freq(BUS_FREQ_HIGH);
 
 	clk_prepare_enable(dsim->clk_pllref);
@@ -1365,6 +1578,7 @@ static void sec_mipi_dsim_bridge_disable(struct drm_bridge *bridge)
 {
 	struct sec_mipi_dsim *dsim = bridge_to_dsim(bridge);
 
+	dev_info(dsim->dev, "%s In!\n", __func__);
 	/* disable data transfer of dsim */
 	sec_mipi_dsim_set_standby(dsim, false);
 
@@ -1386,6 +1600,7 @@ static bool sec_mipi_dsim_bridge_mode_fixup(struct drm_bridge *bridge,
 					    struct drm_display_mode *adjusted_mode)
 {
 	struct sec_mipi_dsim *dsim = bridge_to_dsim(bridge);
+	dev_info(dsim->dev, "%s In!\n", __func__);
 
 	/* the 'bus_flags' in connector's display_info is useless
 	 * for mipi dsim, since dsim only sends packets with no
@@ -1429,7 +1644,9 @@ static void sec_mipi_dsim_bridge_mode_set(struct drm_bridge *bridge,
 					  const struct drm_display_mode *adjusted_mode)
 {
 	struct sec_mipi_dsim *dsim = bridge_to_dsim(bridge);
+	int ret;
 
+	dev_info(dsim->dev, "%s In!\n", __func__);
 	/* This hook is called when the display pipe is completely
 	 * off. And since the pm runtime is implemented, the dsim
 	 * hardware cannot be accessed at this moment. So move all
@@ -1438,245 +1655,22 @@ static void sec_mipi_dsim_bridge_mode_set(struct drm_bridge *bridge,
 	 * so it is called not every time atomic commit.
 	 */
 
-	drm_display_mode_to_videomode(adjusted_mode, &dsim->vmode);
-}
-
-static int
-sec_mipi_dsim_bridge_atomic_check(struct drm_bridge *bridge,
-				  struct drm_bridge_state *bridge_state,
-				  struct drm_crtc_state *crtc_state,
-				  struct drm_connector_state *conn_state)
-{
-	struct sec_mipi_dsim *dsim = bridge_to_dsim(bridge);
-	struct drm_display_mode *adjusted_mode = &crtc_state->adjusted_mode;
-	int ret;
-
-	/* check pll out */
 	ret = sec_mipi_dsim_check_pll_out(dsim, adjusted_mode);
-	if (ret)
-		return ret;
+	if (ret) {
+		dev_err(dsim->dev, "failed to pll out (ret=%d)\n", ret);
+		return;
+	}
 
-	return 0;
+	drm_display_mode_to_videomode(adjusted_mode, &dsim->vmode);
 }
 
 static const struct drm_bridge_funcs sec_mipi_dsim_bridge_funcs = {
 	.attach     = sec_mipi_dsim_bridge_attach,
 	.enable     = sec_mipi_dsim_bridge_enable,
 	.disable    = sec_mipi_dsim_bridge_disable,
-	.atomic_check = sec_mipi_dsim_bridge_atomic_check,
 	.mode_set   = sec_mipi_dsim_bridge_mode_set,
 	.mode_fixup = sec_mipi_dsim_bridge_mode_fixup,
 };
-
-static void __maybe_unused sec_mipi_dsim_irq_mask(struct sec_mipi_dsim *dsim,
-						  int irq_idx)
-{
-	uint32_t intmsk;
-
-	intmsk = dsim_read(dsim, DSIM_INTMSK);
-
-	switch (irq_idx) {
-	case PLLSTABLE:
-		intmsk |= INTMSK_MSKPLLSTABLE;
-		break;
-	case SWRSTRELEASE:
-		intmsk |= INTMSK_MSKSWRELEASE;
-		break;
-	case SFRPLFIFOEMPTY:
-		intmsk |= INTMSK_MSKSFRPLFIFOEMPTY;
-		break;
-	case SFRPHFIFOEMPTY:
-		intmsk |= INTMSK_MSKSFRPHFIFOEMPTY;
-		break;
-	case FRAMEDONE:
-		intmsk |= INTMSK_MSKFRAMEDONE;
-		break;
-	case LPDRTOUT:
-		intmsk |= INTMSK_MSKLPDRTOUT;
-		break;
-	case TATOUT:
-		intmsk |= INTMSK_MSKTATOUT;
-		break;
-	case RXDATDONE:
-		intmsk |= INTMSK_MSKRXDATDONE;
-		break;
-	case RXTE:
-		intmsk |= INTMSK_MSKRXTE;
-		break;
-	case RXACK:
-		intmsk |= INTMSK_MSKRXACK;
-		break;
-	default:
-		/* unsupported irq */
-		return;
-	}
-
-	dsim_write(dsim, intmsk, DSIM_INTMSK);
-}
-
-static void sec_mipi_dsim_irq_unmask(struct sec_mipi_dsim *dsim,
-				     int irq_idx)
-{
-	uint32_t intmsk;
-
-	intmsk = dsim_read(dsim, DSIM_INTMSK);
-
-	switch (irq_idx) {
-	case PLLSTABLE:
-		intmsk &= ~INTMSK_MSKPLLSTABLE;
-		break;
-	case SWRSTRELEASE:
-		intmsk &= ~INTMSK_MSKSWRELEASE;
-		break;
-	case SFRPLFIFOEMPTY:
-		intmsk &= ~INTMSK_MSKSFRPLFIFOEMPTY;
-		break;
-	case SFRPHFIFOEMPTY:
-		intmsk &= ~INTMSK_MSKSFRPHFIFOEMPTY;
-		break;
-	case FRAMEDONE:
-		intmsk &= ~INTMSK_MSKFRAMEDONE;
-		break;
-	case LPDRTOUT:
-		intmsk &= ~INTMSK_MSKLPDRTOUT;
-		break;
-	case TATOUT:
-		intmsk &= ~INTMSK_MSKTATOUT;
-		break;
-	case RXDATDONE:
-		intmsk &= ~INTMSK_MSKRXDATDONE;
-		break;
-	case RXTE:
-		intmsk &= ~INTMSK_MSKRXTE;
-		break;
-	case RXACK:
-		intmsk &= ~INTMSK_MSKRXACK;
-		break;
-	default:
-		/* unsupported irq */
-		return;
-	}
-
-	dsim_write(dsim, intmsk, DSIM_INTMSK);
-}
-
-/* write 1 clear irq */
-static void sec_mipi_dsim_irq_clear(struct sec_mipi_dsim *dsim,
-				    int irq_idx)
-{
-	uint32_t intsrc = 0;
-
-	switch (irq_idx) {
-	case PLLSTABLE:
-		intsrc |= INTSRC_PLLSTABLE;
-		break;
-	case SWRSTRELEASE:
-		intsrc |= INTSRC_SWRSTRELEASE;
-		break;
-	case SFRPLFIFOEMPTY:
-		intsrc |= INTSRC_SFRPLFIFOEMPTY;
-		break;
-	case SFRPHFIFOEMPTY:
-		intsrc |= INTSRC_SFRPHFIFOEMPTY;
-		break;
-	case FRAMEDONE:
-		intsrc |= INTSRC_FRAMEDONE;
-		break;
-	case LPDRTOUT:
-		intsrc |= INTSRC_LPDRTOUT;
-		break;
-	case TATOUT:
-		intsrc |= INTSRC_TATOUT;
-		break;
-	case RXDATDONE:
-		intsrc |= INTSRC_RXDATDONE;
-		break;
-	case RXTE:
-		intsrc |= INTSRC_RXTE;
-		break;
-	case RXACK:
-		intsrc |= INTSRC_RXACK;
-		break;
-	default:
-		/* unsupported irq */
-		return;
-	}
-
-	dsim_write(dsim, intsrc, DSIM_INTSRC);
-}
-
-static void sec_mipi_dsim_irq_init(struct sec_mipi_dsim *dsim)
-{
-	sec_mipi_dsim_irq_unmask(dsim, PLLSTABLE);
-	sec_mipi_dsim_irq_unmask(dsim, SWRSTRELEASE);
-}
-
-static irqreturn_t sec_mipi_dsim_irq_handler(int irq, void *data)
-{
-	uint32_t intsrc, status;
-	struct sec_mipi_dsim *dsim = data;
-
-	intsrc = dsim_read(dsim, DSIM_INTSRC);
-	status = dsim_read(dsim, DSIM_STATUS);
-
-	if (WARN_ON(!intsrc)) {
-		dev_err(dsim->dev, "interrupt is not from dsim\n");
-		return IRQ_NONE;
-	}
-
-	if (WARN_ON(!(intsrc & INTSRC_MASK))) {
-		dev_warn(dsim->dev, "unenable irq happens: %#x\n", intsrc);
-		/* just clear irqs */
-		dsim_write(dsim, intsrc, DSIM_INTSRC);
-		return IRQ_NONE;
-	}
-
-	if (intsrc & INTSRC_PLLSTABLE) {
-		WARN_ON(!(status & STATUS_PLLSTABLE));
-		sec_mipi_dsim_irq_clear(dsim, PLLSTABLE);
-		complete(&dsim->pll_stable);
-	}
-
-	if (intsrc & INTSRC_SWRSTRELEASE)
-		sec_mipi_dsim_irq_clear(dsim, SWRSTRELEASE);
-
-	if (intsrc & INTSRC_SFRPLFIFOEMPTY) {
-		sec_mipi_dsim_irq_clear(dsim, SFRPLFIFOEMPTY);
-		complete(&dsim->pl_tx_done);
-	}
-
-	if (intsrc & INTSRC_SFRPHFIFOEMPTY) {
-		sec_mipi_dsim_irq_clear(dsim, SFRPHFIFOEMPTY);
-		complete(&dsim->ph_tx_done);
-	}
-
-	if (WARN_ON(intsrc & INTSRC_LPDRTOUT)) {
-		sec_mipi_dsim_irq_clear(dsim, LPDRTOUT);
-		dev_warn(dsim->dev, "LP RX timeout\n");
-	}
-
-	if (WARN_ON(intsrc & INTSRC_TATOUT)) {
-		sec_mipi_dsim_irq_clear(dsim, TATOUT);
-		dev_warn(dsim->dev, "Turns around Acknowledge timeout\n");
-	}
-
-	if (intsrc & INTSRC_RXDATDONE) {
-		sec_mipi_dsim_irq_clear(dsim, RXDATDONE);
-		complete(&dsim->rx_done);
-	}
-
-	if (intsrc & INTSRC_RXTE) {
-		sec_mipi_dsim_irq_clear(dsim, RXTE);
-		dev_dbg(dsim->dev, "TE Rx trigger received\n");
-	}
-
-	if (intsrc & INTSRC_RXACK) {
-		sec_mipi_dsim_irq_clear(dsim, RXACK);
-		dev_dbg(dsim->dev, "ACK Rx trigger received\n");
-	}
-
-	return IRQ_HANDLED;
-}
 
 static inline int dphy_timing_default_cmp(const void *key, const void *elt)
 {
