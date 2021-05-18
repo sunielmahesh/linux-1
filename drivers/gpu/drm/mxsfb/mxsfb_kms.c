@@ -9,8 +9,6 @@
  */
 
 #include <linux/clk.h>
-#include <linux/io.h>
-#include <linux/iopoll.h>
 #include <linux/pm_runtime.h>
 #include <linux/spinlock.h>
 
@@ -63,7 +61,7 @@ static void mxsfb_set_formats(struct mxsfb_drm_private *mxsfb)
 	ctrl = CTRL_BYPASS_COUNT | CTRL_MASTER;
 
 	/* CTRL1 contains IRQ config and status bits, preserve those. */
-	ctrl1 = readl(mxsfb->base + LCDC_CTRL1);
+	regmap_read(mxsfb->regmap, LCDC_CTRL1, &ctrl1);
 	ctrl1 &= CTRL1_CUR_FRAME_DONE_IRQ_EN | CTRL1_CUR_FRAME_DONE_IRQ;
 
 	switch (format) {
@@ -95,8 +93,8 @@ static void mxsfb_set_formats(struct mxsfb_drm_private *mxsfb)
 		break;
 	}
 
-	writel(ctrl1, mxsfb->base + LCDC_CTRL1);
-	writel(ctrl, mxsfb->base + LCDC_CTRL);
+	regmap_write(mxsfb->regmap, LCDC_CTRL1, ctrl1);
+	regmap_write(mxsfb->regmap, LCDC_CTRL, ctrl);
 }
 
 static void mxsfb_enable_controller(struct mxsfb_drm_private *mxsfb)
@@ -108,14 +106,14 @@ static void mxsfb_enable_controller(struct mxsfb_drm_private *mxsfb)
 	clk_prepare_enable(mxsfb->clk);
 
 	/* If it was disabled, re-enable the mode again */
-	writel(CTRL_DOTCLK_MODE, mxsfb->base + LCDC_CTRL + REG_SET);
+	regmap_write(mxsfb->regmap, LCDC_CTRL + REG_SET, CTRL_DOTCLK_MODE);
 
 	/* Enable the SYNC signals first, then the DMA engine */
-	reg = readl(mxsfb->base + LCDC_VDCTRL4);
+	regmap_read(mxsfb->regmap, LCDC_VDCTRL4, &reg);
 	reg |= VDCTRL4_SYNC_SIGNALS_ON;
-	writel(reg, mxsfb->base + LCDC_VDCTRL4);
+	regmap_write(mxsfb->regmap, LCDC_VDCTRL4, reg);
 
-	writel(CTRL_RUN, mxsfb->base + LCDC_CTRL + REG_SET);
+	regmap_write(mxsfb->regmap, LCDC_CTRL + REG_SET, CTRL_RUN);
 }
 
 static void mxsfb_disable_controller(struct mxsfb_drm_private *mxsfb)
@@ -126,14 +124,14 @@ static void mxsfb_disable_controller(struct mxsfb_drm_private *mxsfb)
 	 * Even if we disable the controller here, it will still continue
 	 * until its FIFOs are running out of data
 	 */
-	writel(CTRL_DOTCLK_MODE, mxsfb->base + LCDC_CTRL + REG_CLR);
+	regmap_write(mxsfb->regmap, LCDC_CTRL + REG_CLR, CTRL_DOTCLK_MODE);
 
-	readl_poll_timeout(mxsfb->base + LCDC_CTRL, reg, !(reg & CTRL_RUN),
-			   0, 1000);
+	regmap_read_poll_timeout(mxsfb->regmap, LCDC_CTRL, reg,
+				 !(reg & CTRL_RUN), 0, 1000);
 
-	reg = readl(mxsfb->base + LCDC_VDCTRL4);
+	regmap_read(mxsfb->regmap, LCDC_VDCTRL4, &reg);
 	reg &= ~VDCTRL4_SYNC_SIGNALS_ON;
-	writel(reg, mxsfb->base + LCDC_VDCTRL4);
+	regmap_write(mxsfb->regmap, LCDC_VDCTRL4, reg);
 
 	clk_disable_unprepare(mxsfb->clk);
 	if (mxsfb->clk_disp_axi)
@@ -145,29 +143,30 @@ static void mxsfb_disable_controller(struct mxsfb_drm_private *mxsfb)
  * a reset address and mask being either SFTRST(bit 31) or CLKGATE
  * (bit 30).
  */
-static int clear_poll_bit(void __iomem *addr, u32 mask)
+static int clear_poll_bit(struct mxsfb_drm_private *mxsfb, u32 addr, u32 mask)
 {
 	u32 reg;
 
-	writel(mask, addr + REG_CLR);
-	return readl_poll_timeout(addr, reg, !(reg & mask), 0, RESET_TIMEOUT);
+	regmap_write(mxsfb->regmap, addr + REG_CLR, mask);
+	return regmap_read_poll_timeout(mxsfb->regmap, addr, reg,
+					!(reg & mask), 0, RESET_TIMEOUT);
 }
 
 static int mxsfb_reset_block(struct mxsfb_drm_private *mxsfb)
 {
 	int ret;
 
-	ret = clear_poll_bit(mxsfb->base + LCDC_CTRL, CTRL_SFTRST);
+	ret = clear_poll_bit(mxsfb, LCDC_CTRL, CTRL_SFTRST);
 	if (ret)
 		return ret;
 
-	writel(CTRL_CLKGATE, mxsfb->base + LCDC_CTRL + REG_CLR);
+	regmap_write(mxsfb->regmap, LCDC_CTRL + REG_CLR, CTRL_CLKGATE);
 
-	ret = clear_poll_bit(mxsfb->base + LCDC_CTRL, CTRL_SFTRST);
+	ret = clear_poll_bit(mxsfb, LCDC_CTRL, CTRL_SFTRST);
 	if (ret)
 		return ret;
 
-	return clear_poll_bit(mxsfb->base + LCDC_CTRL, CTRL_CLKGATE);
+	return clear_poll_bit(mxsfb, LCDC_CTRL, CTRL_CLKGATE);
 }
 
 static dma_addr_t mxsfb_get_fb_paddr(struct drm_plane *plane)
@@ -205,10 +204,10 @@ static void mxsfb_crtc_mode_set_nofb(struct mxsfb_drm_private *mxsfb)
 		return;
 
 	/* Clear the FIFOs */
-	writel(CTRL1_FIFO_CLEAR, mxsfb->base + LCDC_CTRL1 + REG_SET);
+	regmap_write(mxsfb->regmap, LCDC_CTRL1 + REG_SET, CTRL1_FIFO_CLEAR);
 
 	if (mxsfb->devdata->has_overlay)
-		writel(0, mxsfb->base + LCDC_AS_CTRL);
+		regmap_write(mxsfb->regmap, LCDC_AS_CTRL, 0);
 
 	mxsfb_set_formats(mxsfb);
 
@@ -224,9 +223,9 @@ static void mxsfb_crtc_mode_set_nofb(struct mxsfb_drm_private *mxsfb)
 			     bus_flags);
 	DRM_DEV_DEBUG_DRIVER(drm->dev, "Mode flags: 0x%08X\n", m->flags);
 
-	writel(TRANSFER_COUNT_SET_VCOUNT(m->crtc_vdisplay) |
-	       TRANSFER_COUNT_SET_HCOUNT(m->crtc_hdisplay),
-	       mxsfb->base + mxsfb->devdata->transfer_count);
+	regmap_write(mxsfb->regmap, mxsfb->devdata->transfer_count,
+		     TRANSFER_COUNT_SET_VCOUNT(m->crtc_vdisplay) |
+		     TRANSFER_COUNT_SET_HCOUNT(m->crtc_hdisplay));
 
 	vsync_pulse_len = m->crtc_vsync_end - m->crtc_vsync_start;
 
@@ -250,23 +249,24 @@ static void mxsfb_crtc_mode_set_nofb(struct mxsfb_drm_private *mxsfb)
 	if (bus_flags & DRM_BUS_FLAG_PIXDATA_DRIVE_POSEDGE)
 		vdctrl0 |= VDCTRL0_DOTCLK_ACT_FALLING;
 
-	writel(vdctrl0, mxsfb->base + LCDC_VDCTRL0);
+	regmap_write(mxsfb->regmap, LCDC_VDCTRL0, vdctrl0);
 
 	/* Frame length in lines. */
-	writel(m->crtc_vtotal, mxsfb->base + LCDC_VDCTRL1);
+	regmap_write(mxsfb->regmap, LCDC_VDCTRL1, m->crtc_vtotal);
 
 	/* Line length in units of clocks or pixels. */
 	hsync_pulse_len = m->crtc_hsync_end - m->crtc_hsync_start;
-	writel(set_hsync_pulse_width(mxsfb, hsync_pulse_len) |
-	       VDCTRL2_SET_HSYNC_PERIOD(m->crtc_htotal),
-	       mxsfb->base + LCDC_VDCTRL2);
 
-	writel(SET_HOR_WAIT_CNT(m->crtc_htotal - m->crtc_hsync_start) |
-	       SET_VERT_WAIT_CNT(m->crtc_vtotal - m->crtc_vsync_start),
-	       mxsfb->base + LCDC_VDCTRL3);
+	regmap_write(mxsfb->regmap, LCDC_VDCTRL2,
+		     set_hsync_pulse_width(mxsfb, hsync_pulse_len) |
+		     VDCTRL2_SET_HSYNC_PERIOD(m->crtc_htotal));
 
-	writel(SET_DOTCLK_H_VALID_DATA_CNT(m->hdisplay),
-	       mxsfb->base + LCDC_VDCTRL4);
+	regmap_write(mxsfb->regmap, LCDC_VDCTRL3,
+		     SET_HOR_WAIT_CNT(m->crtc_htotal - m->crtc_hsync_start) |
+		     SET_VERT_WAIT_CNT(m->crtc_vtotal - m->crtc_vsync_start));
+
+	regmap_write(mxsfb->regmap, LCDC_VDCTRL4,
+		     SET_DOTCLK_H_VALID_DATA_CNT(m->hdisplay));
 }
 
 static int mxsfb_crtc_atomic_check(struct drm_crtc *crtc,
@@ -321,8 +321,8 @@ static void mxsfb_crtc_atomic_enable(struct drm_crtc *crtc,
 	/* Write cur_buf as well to avoid an initial corrupt frame */
 	paddr = mxsfb_get_fb_paddr(crtc->primary);
 	if (paddr) {
-		writel(paddr, mxsfb->base + mxsfb->devdata->cur_buf);
-		writel(paddr, mxsfb->base + mxsfb->devdata->next_buf);
+		regmap_write(mxsfb->regmap, mxsfb->devdata->cur_buf, paddr);
+		regmap_write(mxsfb->regmap, mxsfb->devdata->next_buf, paddr);
 	}
 
 	mxsfb_enable_controller(mxsfb);
@@ -356,8 +356,8 @@ static int mxsfb_crtc_enable_vblank(struct drm_crtc *crtc)
 	struct mxsfb_drm_private *mxsfb = to_mxsfb_drm_private(crtc->dev);
 
 	/* Clear and enable VBLANK IRQ */
-	writel(CTRL1_CUR_FRAME_DONE_IRQ, mxsfb->base + LCDC_CTRL1 + REG_CLR);
-	writel(CTRL1_CUR_FRAME_DONE_IRQ_EN, mxsfb->base + LCDC_CTRL1 + REG_SET);
+	regmap_write(mxsfb->regmap, LCDC_CTRL1 + REG_CLR, CTRL1_CUR_FRAME_DONE_IRQ);
+	regmap_write(mxsfb->regmap, LCDC_CTRL1 + REG_SET, CTRL1_CUR_FRAME_DONE_IRQ_EN);
 
 	return 0;
 }
@@ -367,8 +367,8 @@ static void mxsfb_crtc_disable_vblank(struct drm_crtc *crtc)
 	struct mxsfb_drm_private *mxsfb = to_mxsfb_drm_private(crtc->dev);
 
 	/* Disable and clear VBLANK IRQ */
-	writel(CTRL1_CUR_FRAME_DONE_IRQ_EN, mxsfb->base + LCDC_CTRL1 + REG_CLR);
-	writel(CTRL1_CUR_FRAME_DONE_IRQ, mxsfb->base + LCDC_CTRL1 + REG_CLR);
+	regmap_write(mxsfb->regmap, LCDC_CTRL1 + REG_CLR, CTRL1_CUR_FRAME_DONE_IRQ_EN);
+	regmap_write(mxsfb->regmap, LCDC_CTRL1 + REG_CLR, CTRL1_CUR_FRAME_DONE_IRQ);
 }
 
 static const struct drm_crtc_helper_funcs mxsfb_crtc_helper_funcs = {
@@ -426,7 +426,7 @@ static void mxsfb_plane_primary_atomic_update(struct drm_plane *plane,
 
 	paddr = mxsfb_get_fb_paddr(plane);
 	if (paddr)
-		writel(paddr, mxsfb->base + mxsfb->devdata->next_buf);
+		regmap_write(mxsfb->regmap, mxsfb->devdata->next_buf, paddr);
 }
 
 static void mxsfb_plane_overlay_atomic_update(struct drm_plane *plane,
@@ -442,7 +442,7 @@ static void mxsfb_plane_overlay_atomic_update(struct drm_plane *plane,
 
 	paddr = mxsfb_get_fb_paddr(plane);
 	if (!paddr) {
-		writel(0, mxsfb->base + LCDC_AS_CTRL);
+		regmap_write(mxsfb->regmap, LCDC_AS_CTRL, 0);
 		return;
 	}
 
@@ -454,14 +454,14 @@ static void mxsfb_plane_overlay_atomic_update(struct drm_plane *plane,
 	 */
 	paddr += 64;
 
-	writel(paddr, mxsfb->base + LCDC_AS_NEXT_BUF);
+	regmap_write(mxsfb->regmap, LCDC_AS_NEXT_BUF, paddr);
 
 	/*
 	 * If the plane was previously disabled, write LCDC_AS_BUF as well to
 	 * provide the first buffer.
 	 */
 	if (!old_pstate->fb)
-		writel(paddr, mxsfb->base + LCDC_AS_BUF);
+		regmap_write(mxsfb->regmap, LCDC_AS_BUF, paddr);
 
 	ctrl = AS_CTRL_AS_ENABLE | AS_CTRL_ALPHA(255);
 
@@ -489,7 +489,7 @@ static void mxsfb_plane_overlay_atomic_update(struct drm_plane *plane,
 		break;
 	}
 
-	writel(ctrl, mxsfb->base + LCDC_AS_CTRL);
+	regmap_write(mxsfb->regmap, LCDC_AS_CTRL, ctrl);
 }
 
 static bool mxsfb_format_mod_supported(struct drm_plane *plane,

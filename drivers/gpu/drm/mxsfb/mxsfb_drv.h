@@ -8,6 +8,7 @@
 #ifndef __MXSFB_DRV_H__
 #define __MXSFB_DRV_H__
 
+#include <linux/regmap.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_device.h>
 #include <drm/drm_encoder.h>
@@ -27,7 +28,6 @@ struct mxsfb_devdata {
 struct mxsfb_drm_private {
 	const struct mxsfb_devdata	*devdata;
 
-	void __iomem			*base;	/* registers */
 	struct clk			*clk;
 	struct clk			*clk_axi;
 	struct clk			*clk_disp_axi;
@@ -41,6 +41,7 @@ struct mxsfb_drm_private {
 	struct drm_encoder		encoder;
 	struct drm_connector		*connector;
 	struct drm_bridge		*bridge;
+	struct regmap			*regmap;
 };
 
 static inline struct mxsfb_drm_private *

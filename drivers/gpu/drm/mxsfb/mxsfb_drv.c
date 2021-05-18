@@ -10,7 +10,6 @@
 
 #include <linux/clk.h>
 #include <linux/dma-mapping.h>
-#include <linux/io.h>
 #include <linux/module.h>
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
@@ -32,6 +31,14 @@
 
 #include "mxsfb_drv.h"
 #include "mxsfb_regs.h"
+
+static const struct regmap_config mxsfb_regmap_config = {
+	.reg_bits = 16,
+	.val_bits = 32,
+	.reg_stride = 4,
+	.max_register = LCDC_AS_CLRKEYHIGH,
+	.name = "imx-mxsfb",
+};
 
 enum mxsfb_devtype {
 	MXSFB_V3,
@@ -156,6 +163,7 @@ static int mxsfb_load(struct drm_device *drm,
 	struct platform_device *pdev = to_platform_device(drm->dev);
 	struct mxsfb_drm_private *mxsfb;
 	struct resource *res;
+	void __iomem *base;
 	int ret;
 
 	mxsfb = devm_kzalloc(&pdev->dev, sizeof(*mxsfb), GFP_KERNEL);
@@ -167,9 +175,17 @@ static int mxsfb_load(struct drm_device *drm,
 	mxsfb->devdata = devdata;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	mxsfb->base = devm_ioremap_resource(drm->dev, res);
-	if (IS_ERR(mxsfb->base))
-		return PTR_ERR(mxsfb->base);
+	base = devm_ioremap_resource(drm->dev, res);
+	if (IS_ERR(base))
+		return PTR_ERR(base);
+
+	mxsfb->regmap = devm_regmap_init_mmio(drm->dev, base,
+					      &mxsfb_regmap_config);
+	if (IS_ERR(mxsfb->regmap)) {
+		ret = PTR_ERR(mxsfb->regmap);
+		DRM_DEV_ERROR(drm->dev, "failed to create regmap: %d\n", ret);
+		return ret;
+	}
 
 	mxsfb->clk = devm_clk_get(drm->dev, NULL);
 	if (IS_ERR(mxsfb->clk))
@@ -275,12 +291,13 @@ static irqreturn_t mxsfb_irq_handler(int irq, void *data)
 	struct mxsfb_drm_private *mxsfb = drm->dev_private;
 	u32 reg;
 
-	reg = readl(mxsfb->base + LCDC_CTRL1);
+	regmap_read(mxsfb->regmap, LCDC_CTRL1, &reg);
 
 	if (reg & CTRL1_CUR_FRAME_DONE_IRQ)
 		drm_crtc_handle_vblank(&mxsfb->crtc);
 
-	writel(CTRL1_CUR_FRAME_DONE_IRQ, mxsfb->base + LCDC_CTRL1 + REG_CLR);
+	regmap_write(mxsfb->regmap, LCDC_CTRL1 + REG_CLR,
+		     CTRL1_CUR_FRAME_DONE_IRQ);
 
 	return IRQ_HANDLED;
 }
