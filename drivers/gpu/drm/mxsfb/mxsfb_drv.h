@@ -8,6 +8,7 @@
 #ifndef __MXSFB_DRV_H__
 #define __MXSFB_DRV_H__
 
+#include <linux/regmap.h>
 #include <drm/drm_crtc.h>
 #include <drm/drm_device.h>
 #include <drm/drm_encoder.h>
@@ -27,7 +28,6 @@ struct mxsfb_devdata {
 struct mxsfb_drm_private {
 	const struct mxsfb_devdata	*devdata;
 
-	void __iomem			*base;	/* registers */
 	struct clk			*clk;
 	struct clk			*clk_axi;
 	struct clk			*clk_disp_axi;
@@ -41,12 +41,36 @@ struct mxsfb_drm_private {
 	struct drm_encoder		encoder;
 	struct drm_connector		*connector;
 	struct drm_bridge		*bridge;
+	struct regmap			*regmap;
 };
 
 static inline struct mxsfb_drm_private *
 to_mxsfb_drm_private(struct drm_device *drm)
 {
 	return drm->dev_private;
+}
+
+static void mxsfb_write(u32 val, struct mxsfb_drm_private *mxsfb, unsigned int reg)
+{
+	int ret;
+
+	ret = regmap_write(mxsfb->regmap, reg, val);
+	if (ret < 0)
+		dev_err(mxsfb->drm->dev, "failed to write mxsfb reg 0x%x: %d\n",
+			reg, ret);
+}
+
+static u32 mxsfb_read(struct mxsfb_drm_private *mxsfb, u32 reg)
+{
+	unsigned int val;
+	int ret;
+
+	ret = regmap_read(mxsfb->regmap, reg, &val);
+	if (ret < 0)
+		dev_err(mxsfb->drm->dev, "failed to read mxsfb reg 0x%x: %d\n",
+			reg, ret);
+
+	return val;
 }
 
 void mxsfb_enable_axi_clk(struct mxsfb_drm_private *mxsfb);
