@@ -39,7 +39,6 @@
 #include <drm/drm_simple_kms_helper.h>
 #include <video/videomode.h>
 #include <video/mipi_display.h>
-//#include "../imx/imx-drm.h"
 
 /* dsim registers */
 #define DSIM_VERSION			0x00
@@ -1365,6 +1364,14 @@ struct dsim_pll_pms *sec_mipi_dsim_calc_pmsk(struct sec_mipi_dsim *dsim)
 	krange->min = 0;
 	krange->max = 0;
 
+	dev_info(dev,
+        "prange->min %d, fin %d, fpref_range->min %d, prange->max %d, fpref_range->max %d\n",
+        prange->min, fin, fpref_range->min, prange->max, fpref_range->max);
+
+        dev_info(dev,
+        "mrange->min %d, pfvco %lld, fvco_range->min %d, mrange->max %d, fvco_range->max %d\n",
+        mrange->min, pfvco, fvco_range->min, mrange->max, fvco_range->max);
+
 	/* narrow 'p' range via 'Fpref' limitation:
 	 * Fpref : [2MHz ~ 30MHz] (Fpref = Fin / p)
 	 */
@@ -1382,7 +1389,7 @@ struct dsim_pll_pms *sec_mipi_dsim_calc_pmsk(struct sec_mipi_dsim *dsim)
 	mrange->max = min_t(uint32_t, mrange->max,
 			    DIV_ROUND_UP_ULL(pfvco, fin));
 
-	dev_dbg(dev, "p: min = %u, max = %u, "
+	dev_info(dev, "p: min = %u, max = %u, "
 		     "m: min = %u, max = %u, "
 		     "s: min = %u, max = %u\n",
 		prange->min, prange->max, mrange->min,
@@ -1439,7 +1446,7 @@ struct dsim_pll_pms *sec_mipi_dsim_calc_pmsk(struct sec_mipi_dsim *dsim)
 	pll_pms->m = best_m;
 	pll_pms->s = best_s;
 
-	dev_dbg(dev, "fout = %u, fin = %u, m = %u, "
+	dev_info(dev, "fout = %u, fin = %u, m = %u, "
 		     "p = %u, s = %u, best_delta = %u\n",
 		fout, fin, pll_pms->m, pll_pms->p, pll_pms->s, best_delta);
 
@@ -1462,6 +1469,9 @@ static int sec_mipi_dsim_check_pll_out(struct sec_mipi_dsim *dsim,
 	pix_clk = mode->clock;
 	bit_clk = DIV_ROUND_UP(pix_clk * bpp, dsim->lanes);
 
+	dev_info(dsim->dev,
+		 "bpp %d, clock %d, lane %d, pix_clk %d, bit_clk %d, max_rate %lld\n",
+		 bpp, mode->clock, dsim->lanes, pix_clk, bit_clk * 1000, pdata->max_data_rate);
 	if (bit_clk * 1000 > pdata->max_data_rate) {
 		dev_err(dsim->dev,
 			"reuest bit clk freq exceeds lane's maximum value\n");
@@ -1472,6 +1482,7 @@ static int sec_mipi_dsim_check_pll_out(struct sec_mipi_dsim *dsim,
 	dsim->bit_clk = bit_clk;
 	dsim->hpar = NULL;
 
+	dev_info(dsim->dev, "pix_clk %d, bit_clk %d\n", dsim->pix_clk, dsim->bit_clk);
 	pmsk = sec_mipi_dsim_calc_pmsk(dsim);
 	if (IS_ERR(pmsk)) {
 		dev_err(dsim->dev,
@@ -1773,6 +1784,8 @@ static int imx_sec_dsim_probe(struct platform_device *pdev)
 	version = dsim_read(dsim, DSIM_VERSION);
 	WARN_ON(version != dsim->pdata->version);
 	dev_info(dev, "version number is %#x\n", version);
+
+	dsim->pref_clk = PHY_REF_CLK;
 
 	ret = devm_request_irq(dev, irq, sec_mipi_dsim_irq_handler,
 			       0, dev_name(dev), dsim);
