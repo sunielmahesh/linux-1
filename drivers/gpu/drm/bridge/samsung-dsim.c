@@ -16,6 +16,7 @@
 #include <linux/of_gpio.h>
 #include <linux/of_graph.h>
 #include <linux/phy/phy.h>
+#include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 
 #include <asm/unaligned.h>
@@ -254,7 +255,7 @@ struct samsung_dsim {
 	struct drm_bridge *out_bridge;
 	struct device *dev;
 
-	void __iomem *reg_base;
+	struct regmap *regmap;
 	struct phy *phy;
 	struct clk **clks;
 	struct regulator_bulk_data supplies[2];
@@ -356,6 +357,37 @@ static const unsigned int exynos5433_reg_ofs[] = {
 	[DSIM_PHYTIMING2_REG] = 0xBC,
 };
 
+static void dsim_write(struct samsung_dsim *dsi, u32 val, unsigned int reg)
+{
+	int ret;
+
+	ret = regmap_write(dsi->regmap, reg, val);
+	if (ret < 0)
+		dev_err(dsi->dev, "failed to write SEC DSIM reg 0x%x: %d\n",
+			reg, ret);
+}
+
+static u32 dsim_read(struct samsung_dsim *dsi, u32 reg)
+{
+	unsigned int val;
+	int ret;
+
+	ret = regmap_read(dsi->regmap, reg, &val);
+	if (ret < 0)
+		dev_err(dsi->dev, "failed to read SEC DSIM reg 0x%x: %d\n",
+			reg, ret);
+
+	return val;
+}
+
+static const struct regmap_config sec_dsim_regmap_config = {
+	.reg_bits = 8,
+	.val_bits = 32,
+	.reg_stride = 4,
+	.max_register = 0xbc,
+	.name = "sec-dsim",
+};
+
 #define DSIM_HBLANK_PARAM(nm, vf, hfp, hbp, hsa, num)	\
 	.name	  = (nm),				\
 	.vrefresh = (vf),				\
@@ -448,7 +480,7 @@ static inline void samsung_dsim_write(struct samsung_dsim *dsi,
 	else
 		reg_ofs = exynos_reg_ofs;
 
-	writel(val, dsi->reg_base + reg_ofs[idx]);
+	dsim_write(dsi, val, reg_ofs[idx]);
 }
 
 static inline u32 samsung_dsim_read(struct samsung_dsim *dsi, enum reg_idx idx)
@@ -460,7 +492,7 @@ static inline u32 samsung_dsim_read(struct samsung_dsim *dsi, enum reg_idx idx)
 	else
 		reg_ofs = exynos_reg_ofs;
 
-	return readl(dsi->reg_base + reg_ofs[idx]);
+	return dsim_read(dsi, reg_ofs[idx]);
 }
 
 static void samsung_dsim_wait_for_reset(struct samsung_dsim *dsi)
@@ -558,8 +590,7 @@ static unsigned long samsung_dsim_set_pll(struct samsung_dsim *dsi,
 	}
 	dev_dbg(dsi->dev, "PLL freq %lu, (p %d, m %d, s %d)\n", fout, p, m, s);
 
-	writel(driver_data->reg_values[PLL_TIMER],
-			dsi->reg_base + driver_data->plltmr_reg);
+	dsim_write(dsi, driver_data->reg_values[PLL_TIMER], driver_data->plltmr_reg);
 
 	reg = DSIM_PLL_EN | DSIM_PLL_P(p) | DSIM_PLL_M(m) | DSIM_PLL_S(s);
 
@@ -1747,6 +1778,7 @@ static struct samsung_dsim *__samsung_dsim_probe(struct platform_device *pdev)
 	struct drm_bridge *bridge;
 	struct resource *res;
 	struct samsung_dsim *dsi;
+	void __iomem *base;
 	int ret, i;
 
 	dsi = devm_kzalloc(dev, sizeof(*dsi), GFP_KERNEL);
@@ -1797,10 +1829,17 @@ static struct samsung_dsim *__samsung_dsim_probe(struct platform_device *pdev)
 	}
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	dsi->reg_base = devm_ioremap_resource(dev, res);
-	if (IS_ERR(dsi->reg_base)) {
+	base = devm_ioremap_resource(dev, res);
+	if (IS_ERR(base)) {
 		dev_err(dev, "failed to remap io region\n");
-		return dsi->reg_base;
+		return base;
+	}
+
+	dsi->regmap = devm_regmap_init_mmio(dev, base, &sec_dsim_regmap_config);
+	if (IS_ERR(dsi->regmap)) {
+		ret = PTR_ERR(dsi->regmap);
+		dev_err(dev, "failed to create SEC DSIM regmap: %d\n", ret);
+		return ERR_PTR(ret);;
 	}
 
 	dsi->phy = devm_phy_get(dev, "dsim");
