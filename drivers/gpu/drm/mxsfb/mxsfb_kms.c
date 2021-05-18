@@ -52,31 +52,55 @@ static void mxsfb_set_formats(struct mxsfb_drm_private *mxsfb)
 	struct drm_device *drm = mxsfb->drm;
 	const u32 format = mxsfb->crtc.primary->state->fb->format->format;
 	u32 bus_format = MEDIA_BUS_FMT_RGB888_1X24;
-	u32 ctrl, ctrl1;
+	u32 ctrl, ctrl1, ctrl2;
 
-	if (mxsfb->connector->display_info.num_bus_formats)
-		bus_format = mxsfb->connector->display_info.bus_formats[0];
+//	if (mxsfb->connector->display_info.num_bus_formats)
+//		bus_format = mxsfb->connector->display_info.bus_formats[0];
 
 	DRM_DEV_DEBUG_DRIVER(drm->dev, "Using bus_format: 0x%08X\n",
 			     bus_format);
+
+	ctrl2 = mxsfb_read(mxsfb, LCDC_CTRL2);
+	ctrl2 &= ~CTRL2_OUTSTANDING_REQS(0x7);
+        ctrl2 |= CTRL2_OUTSTANDING_REQS(REQ_16);
+	mxsfb_write(ctrl2, mxsfb, LCDC_CTRL2);
 
 	ctrl = CTRL_BYPASS_COUNT | CTRL_MASTER;
 
 	/* CTRL1 contains IRQ config and status bits, preserve those. */
 	ctrl1 = mxsfb_read(mxsfb, LCDC_CTRL1);
 	ctrl1 &= CTRL1_CUR_FRAME_DONE_IRQ_EN | CTRL1_CUR_FRAME_DONE_IRQ;
+	ctrl1 |= CTRL1_RECOVERY_ON_UNDERFLOW;
+
+	 /* default is 'RGB' order */
+	mxsfb_write(CTRL2_ODD_LINE_PATTERN(0x7) | CTRL2_EVEN_LINE_PATTERN(0x7),
+		    mxsfb, LCDC_CTRL2 + REG_CLR);
 
 	switch (format) {
 	case DRM_FORMAT_RGB565:
 		dev_dbg(drm->dev, "Setting up RGB565 mode\n");
 		ctrl |= CTRL_WORD_LENGTH_16;
 		ctrl1 |= CTRL1_SET_BYTE_PACKAGING(0xf);
+
+		/* 'BGR' order */
+		if (format == DRM_FORMAT_BGR565         ||
+		    format == DRM_FORMAT_ABGR1555       ||
+		    format == DRM_FORMAT_XBGR1555)
+			mxsfb_write(CTRL2_ODD_LINE_PATTERN(0x5) |
+				    CTRL2_EVEN_LINE_PATTERN(0x5),
+				    mxsfb, LCDC_CTRL2 + REG_SET);
 		break;
 	case DRM_FORMAT_XRGB8888:
 		dev_dbg(drm->dev, "Setting up XRGB8888 mode\n");
 		ctrl |= CTRL_WORD_LENGTH_24;
 		/* Do not use packed pixels = one pixel per word instead. */
 		ctrl1 |= CTRL1_SET_BYTE_PACKAGING(0x7);
+		/* 'BGR' order */
+                if (format == DRM_FORMAT_ABGR8888 ||
+                    format == DRM_FORMAT_XBGR8888)
+                        mxsfb_write(CTRL2_ODD_LINE_PATTERN(0x5) |
+                               CTRL2_EVEN_LINE_PATTERN(0x5),
+                               mxsfb, LCDC_CTRL2 + REG_SET);
 		break;
 	}
 

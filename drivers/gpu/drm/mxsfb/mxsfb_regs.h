@@ -14,6 +14,7 @@
 
 #define LCDC_CTRL			0x00
 #define LCDC_CTRL1			0x10
+#define LCDC_CTRL2			0x20
 #define LCDC_V3_TRANSFER_COUNT		0x20
 #define LCDC_V4_TRANSFER_COUNT		0x30
 #define LCDC_V4_CUR_BUF			0x40
@@ -54,11 +55,25 @@
 #define CTRL_DF24			BIT(1)
 #define CTRL_RUN			BIT(0)
 
+#define REG_MASK(e, s) (((1 << ((e) - (s) + 1)) - 1) << (s))
+#define REG_PUT(x, e, s) (((x) << (s)) & REG_MASK(e, s))
+
+#define CTRL1_RECOVERY_ON_UNDERFLOW	BIT(24)
 #define CTRL1_FIFO_CLEAR		BIT(21)
 #define CTRL1_SET_BYTE_PACKAGING(x)	(((x) & 0xf) << 16)
 #define CTRL1_GET_BYTE_PACKAGING(x)	(((x) >> 16) & 0xf)
 #define CTRL1_CUR_FRAME_DONE_IRQ_EN	BIT(13)
 #define CTRL1_CUR_FRAME_DONE_IRQ	BIT(9)
+
+#define REQ_1   0
+#define REQ_2   1
+#define REQ_4   2
+#define REQ_8   3
+#define REQ_16  4
+
+#define CTRL2_OUTSTANDING_REQS(x)       REG_PUT((x), 23, 21)
+#define CTRL2_ODD_LINE_PATTERN(x)       REG_PUT((x), 18, 16)
+#define CTRL2_EVEN_LINE_PATTERN(x)      REG_PUT((x), 14, 12)
 
 #define TRANSFER_COUNT_SET_VCOUNT(x)	(((x) & 0xffff) << 16)
 #define TRANSFER_COUNT_GET_VCOUNT(x)	(((x) >> 16) & 0xffff)
