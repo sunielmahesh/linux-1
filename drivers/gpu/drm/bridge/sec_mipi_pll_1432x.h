@@ -34,7 +34,7 @@
  *
  */
 
-const struct sec_mipi_dsim_pll pll_1432x = {
+const struct sec_dsim_pll pll_1432x = {
 	.p	= { .min = 1,		.max = 63,	},
 	.m	= { .min = 64,		.max = 1023,	},
 	.s	= { .min = 0,		.max = 5,	},

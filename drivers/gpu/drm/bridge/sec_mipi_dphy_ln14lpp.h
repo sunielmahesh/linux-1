@@ -16,7 +16,7 @@
 #define __SEC_DSIM_DPHY_LN14LPP_H__
 
 /* descending order based on 'bit_clk' value */
-static const struct sec_mipi_dsim_dphy_timing dphy_timing_ln14lpp_v1p2[] = {
+static const struct sec_dsim_dphy_timing dphy_timing_ln14lpp_v1p2[] = {
 	{ DSIM_DPHY_TIMING(2100, 19, 91, 22, 19, 20, 35, 22, 15, 26), },
 	{ DSIM_DPHY_TIMING(2090, 19, 91, 22, 19, 19, 35, 22, 15, 26), },
 	{ DSIM_DPHY_TIMING(2080, 19, 91, 21, 18, 19, 35, 22, 15, 26), },

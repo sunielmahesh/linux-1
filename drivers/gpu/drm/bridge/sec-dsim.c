@@ -273,26 +273,24 @@
 #define MIPI_HBP_PKT_OVERHEAD	6
 #define MIPI_HSA_PKT_OVERHEAD	6
 
-#define to_sec_mipi_dsim(dsi) container_of(dsi, struct sec_mipi_dsim, dsi_host)
-
 /* DPHY PLL structure */
-struct sec_mipi_dsim_range {
+struct sec_dsim_range {
 	uint32_t min;
 	uint32_t max;
 };
 
-struct sec_mipi_dsim_pll {
-	struct sec_mipi_dsim_range p;
-	struct sec_mipi_dsim_range m;
-	struct sec_mipi_dsim_range s;
-	struct sec_mipi_dsim_range k;
-	struct sec_mipi_dsim_range fin;
-	struct sec_mipi_dsim_range fpref;
-	struct sec_mipi_dsim_range fvco;
+struct sec_dsim_pll {
+	struct sec_dsim_range p;
+	struct sec_dsim_range m;
+	struct sec_dsim_range s;
+	struct sec_dsim_range k;
+	struct sec_dsim_range fin;
+	struct sec_dsim_range fpref;
+	struct sec_dsim_range fvco;
 };
 
 /* DPHY timings structure */
-struct sec_mipi_dsim_dphy_timing {
+struct sec_dsim_dphy_timing {
 	uint32_t bit_clk;	/* MHz */
 
 	uint32_t clk_prepare;
@@ -321,21 +319,20 @@ struct sec_mipi_dsim_dphy_timing {
 	.lpx		= lp,					\
 	.hs_exit	= hexit
 
-struct sec_mipi_dsim_plat_data {
+struct sec_dsim_plat_data {
 	uint32_t version;
 	uint32_t max_data_lanes;
 	uint64_t max_data_rate;
-	const struct sec_mipi_dsim_dphy_timing *dphy_timing;
+	const struct sec_dsim_dphy_timing *dphy_timing;
 	uint32_t num_dphy_timing;
-	const struct sec_mipi_dsim_pll *dphy_pll;
+	const struct sec_dsim_pll *dphy_pll;
 	int (*dphy_timing_cmp)(const void *key, const void *elt);
 };
 
 #include "sec_mipi_dphy_ln14lpp.h"
 #include "sec_mipi_pll_1432x.h"
 
-#define DRIVER_NAME "imx_sec_dsim_drv"
-
+#define DRIVER_NAME		"sec-dsim"
 
 /* used for CEA standard modes */
 struct dsim_hblank_par {
@@ -355,8 +352,8 @@ struct dsim_pll_pms {
 	uint32_t k;
 };
 
-struct sec_mipi_dsim {
-	struct mipi_dsi_host dsi_host;
+struct sec_dsim {
+	struct mipi_dsi_host host;
 	struct drm_bridge bridge;
 	struct drm_bridge *panel_bridge;
 	struct device *dev;
@@ -391,15 +388,20 @@ struct sec_mipi_dsim {
 	struct completion ph_tx_done;
 	struct completion pl_tx_done;
 	struct completion rx_done;
-	const struct sec_mipi_dsim_plat_data *pdata;
+	const struct sec_dsim_plat_data *pdata;
 };
 
-static inline struct sec_mipi_dsim *bridge_to_dsim(struct drm_bridge *bridge)
+static inline struct sec_dsim *host_to_dsim(struct mipi_dsi_host *host)
 {
-	return container_of(bridge, struct sec_mipi_dsim, bridge);
+	return container_of(host, struct sec_dsim, host);
 }
 
-static void dsim_write(struct sec_mipi_dsim *dsim, u32 val, unsigned int reg)
+static inline struct sec_dsim *bridge_to_dsim(struct drm_bridge *bridge)
+{
+	return container_of(bridge, struct sec_dsim, bridge);
+}
+
+static void dsim_write(struct sec_dsim *dsim, u32 val, unsigned int reg)
 {
 	int ret;
 
@@ -409,7 +411,7 @@ static void dsim_write(struct sec_mipi_dsim *dsim, u32 val, unsigned int reg)
 			reg, ret);
 }
 
-static u32 dsim_read(struct sec_mipi_dsim *dsim, u32 reg)
+static u32 dsim_read(struct sec_dsim *dsim, u32 reg)
 {
 	unsigned int val;
 	int ret;
@@ -427,10 +429,10 @@ static const struct regmap_config sec_dsim_regmap_config = {
 	.val_bits = 32,
 	.reg_stride = 4,
 	.max_register = 0xbc,
-	.name = "sec-dsim",
+	.name = DRIVER_NAME,
 };
 
-static void __maybe_unused sec_mipi_dsim_irq_mask(struct sec_mipi_dsim *dsim,
+static void __maybe_unused sec_dsim_irq_mask(struct sec_dsim *dsim,
 						  int irq_idx)
 {
 	uint32_t intmsk;
@@ -476,7 +478,7 @@ static void __maybe_unused sec_mipi_dsim_irq_mask(struct sec_mipi_dsim *dsim,
 	dsim_write(dsim, intmsk, DSIM_INTMSK);
 }
 
-static void sec_mipi_dsim_irq_unmask(struct sec_mipi_dsim *dsim,
+static void sec_dsim_irq_unmask(struct sec_dsim *dsim,
 				     int irq_idx)
 {
 	uint32_t intmsk;
@@ -523,7 +525,7 @@ static void sec_mipi_dsim_irq_unmask(struct sec_mipi_dsim *dsim,
 }
 
 /* write 1 clear irq */
-static void sec_mipi_dsim_irq_clear(struct sec_mipi_dsim *dsim,
+static void sec_dsim_irq_clear(struct sec_dsim *dsim,
 				    int irq_idx)
 {
 	uint32_t intsrc = 0;
@@ -567,16 +569,16 @@ static void sec_mipi_dsim_irq_clear(struct sec_mipi_dsim *dsim,
 	dsim_write(dsim, intsrc, DSIM_INTSRC);
 }
 
-static void sec_mipi_dsim_irq_init(struct sec_mipi_dsim *dsim)
+static void sec_dsim_irq_init(struct sec_dsim *dsim)
 {
-	sec_mipi_dsim_irq_unmask(dsim, PLLSTABLE);
-	sec_mipi_dsim_irq_unmask(dsim, SWRSTRELEASE);
+	sec_dsim_irq_unmask(dsim, PLLSTABLE);
+	sec_dsim_irq_unmask(dsim, SWRSTRELEASE);
 }
 
-static irqreturn_t sec_mipi_dsim_irq_handler(int irq, void *data)
+static irqreturn_t sec_dsim_irq_handler(int irq, void *data)
 {
 	uint32_t intsrc, status;
-	struct sec_mipi_dsim *dsim = data;
+	struct sec_dsim *dsim = data;
 
 	intsrc = dsim_read(dsim, DSIM_INTSRC);
 	status = dsim_read(dsim, DSIM_STATUS);
@@ -595,45 +597,45 @@ static irqreturn_t sec_mipi_dsim_irq_handler(int irq, void *data)
 
 	if (intsrc & INTSRC_PLLSTABLE) {
 		WARN_ON(!(status & STATUS_PLLSTABLE));
-		sec_mipi_dsim_irq_clear(dsim, PLLSTABLE);
+		sec_dsim_irq_clear(dsim, PLLSTABLE);
 		complete(&dsim->pll_stable);
 	}
 
 	if (intsrc & INTSRC_SWRSTRELEASE)
-		sec_mipi_dsim_irq_clear(dsim, SWRSTRELEASE);
+		sec_dsim_irq_clear(dsim, SWRSTRELEASE);
 
 	if (intsrc & INTSRC_SFRPLFIFOEMPTY) {
-		sec_mipi_dsim_irq_clear(dsim, SFRPLFIFOEMPTY);
+		sec_dsim_irq_clear(dsim, SFRPLFIFOEMPTY);
 		complete(&dsim->pl_tx_done);
 	}
 
 	if (intsrc & INTSRC_SFRPHFIFOEMPTY) {
-		sec_mipi_dsim_irq_clear(dsim, SFRPHFIFOEMPTY);
+		sec_dsim_irq_clear(dsim, SFRPHFIFOEMPTY);
 		complete(&dsim->ph_tx_done);
 	}
 
 	if (WARN_ON(intsrc & INTSRC_LPDRTOUT)) {
-		sec_mipi_dsim_irq_clear(dsim, LPDRTOUT);
+		sec_dsim_irq_clear(dsim, LPDRTOUT);
 		dev_warn(dsim->dev, "LP RX timeout\n");
 	}
 
 	if (WARN_ON(intsrc & INTSRC_TATOUT)) {
-		sec_mipi_dsim_irq_clear(dsim, TATOUT);
+		sec_dsim_irq_clear(dsim, TATOUT);
 		dev_warn(dsim->dev, "Turns around Acknowledge timeout\n");
 	}
 
 	if (intsrc & INTSRC_RXDATDONE) {
-		sec_mipi_dsim_irq_clear(dsim, RXDATDONE);
+		sec_dsim_irq_clear(dsim, RXDATDONE);
 		complete(&dsim->rx_done);
 	}
 
 	if (intsrc & INTSRC_RXTE) {
-		sec_mipi_dsim_irq_clear(dsim, RXTE);
+		sec_dsim_irq_clear(dsim, RXTE);
 		dev_dbg(dsim->dev, "TE Rx trigger received\n");
 	}
 
 	if (intsrc & INTSRC_RXACK) {
-		sec_mipi_dsim_irq_clear(dsim, RXACK);
+		sec_dsim_irq_clear(dsim, RXACK);
 		dev_dbg(dsim->dev, "ACK Rx trigger received\n");
 	}
 
@@ -647,12 +649,6 @@ static irqreturn_t sec_mipi_dsim_irq_handler(int irq, void *data)
 	.hbp_wc   = (hbp),				\
 	.hsa_wc   = (hsa),				\
 	.lanes	  = (num)
-
-#define DSIM_PLL_PMS(c, pp, mm, ss)			\
-	.bit_clk = (c),					\
-	.p = (pp),					\
-	.m = (mm),					\
-	.s = (ss)
 
 static const struct dsim_hblank_par hblank_4lanes[] = {
 	/* {  88, 148, 44 } */
@@ -688,7 +684,7 @@ static const struct dsim_hblank_par hblank_2lanes[] = {
 	{ DSIM_HBLANK_PARAM("640x480"  , 60,  18,  66, 138, 2), },
 };
 
-static const struct dsim_hblank_par *sec_mipi_dsim_get_hblank_par(const char *name,
+static const struct dsim_hblank_par *sec_dsim_get_hblank_par(const char *name,
 								  int vrefresh,
 								  int lanes)
 {
@@ -729,11 +725,11 @@ static const struct dsim_hblank_par *sec_mipi_dsim_get_hblank_par(const char *na
 }
 
 /* For now, dsim only support one device attached */
-static int sec_mipi_dsim_host_attach(struct mipi_dsi_host *host,
+static int sec_dsim_host_attach(struct mipi_dsi_host *host,
 				     struct mipi_dsi_device *dsi)
 {
-	struct sec_mipi_dsim *dsim = to_sec_mipi_dsim(host);
-	const struct sec_mipi_dsim_plat_data *pdata = dsim->pdata;
+	struct sec_dsim *dsim = host_to_dsim(host);
+	const struct sec_dsim_plat_data *pdata = dsim->pdata;
 	struct device *dev = dsim->dev;
 
 	if (!dsi->lanes || dsi->lanes > pdata->max_data_lanes) {
@@ -774,10 +770,10 @@ static int sec_mipi_dsim_host_attach(struct mipi_dsi_host *host,
 	return 0;
 }
 
-static int sec_mipi_dsim_host_detach(struct mipi_dsi_host *host,
+static int sec_dsim_host_detach(struct mipi_dsi_host *host,
 				     struct mipi_dsi_device *dsi)
 {
-	struct sec_mipi_dsim *dsim = to_sec_mipi_dsim(host);
+	struct sec_dsim *dsim = host_to_dsim(host);
 
 	/* clear the saved dsi parameters */
 	dsim->lanes	 = 0;
@@ -788,7 +784,7 @@ static int sec_mipi_dsim_host_detach(struct mipi_dsi_host *host,
 	return 0;
 }
 
-static void sec_mipi_dsim_config_cmd_lpm(struct sec_mipi_dsim *dsim,
+static void sec_dsim_config_cmd_lpm(struct sec_dsim *dsim,
 					 bool enable)
 {
 	uint32_t escmode;
@@ -803,7 +799,7 @@ static void sec_mipi_dsim_config_cmd_lpm(struct sec_mipi_dsim *dsim,
 	dsim_write(dsim, escmode, DSIM_ESCMODE);
 }
 
-static void sec_mipi_dsim_write_pl_to_sfr_fifo(struct sec_mipi_dsim *dsim,
+static void sec_dsim_write_pl_to_sfr_fifo(struct sec_dsim *dsim,
 					       const void *payload,
 					       size_t length)
 {
@@ -834,7 +830,7 @@ static void sec_mipi_dsim_write_pl_to_sfr_fifo(struct sec_mipi_dsim *dsim,
 	}
 }
 
-static void sec_mipi_dsim_write_ph_to_sfr_fifo(struct sec_mipi_dsim *dsim,
+static void sec_dsim_write_ph_to_sfr_fifo(struct sec_dsim *dsim,
 					       void *header,
 					       bool use_lpm)
 {
@@ -847,7 +843,7 @@ static void sec_mipi_dsim_write_ph_to_sfr_fifo(struct sec_mipi_dsim *dsim,
 	dsim_write(dsim, pkthdr, DSIM_PKTHDR);
 }
 
-static int sec_mipi_dsim_read_pl_from_sfr_fifo(struct sec_mipi_dsim *dsim,
+static int sec_dsim_read_pl_from_sfr_fifo(struct sec_dsim *dsim,
 					       void *payload,
 					       size_t length)
 {
@@ -924,13 +920,13 @@ static int sec_mipi_dsim_read_pl_from_sfr_fifo(struct sec_mipi_dsim *dsim,
 	return length;
 }
 
-static ssize_t sec_mipi_dsim_host_transfer(struct mipi_dsi_host *host,
+static ssize_t sec_dsim_host_transfer(struct mipi_dsi_host *host,
 					   const struct mipi_dsi_msg *msg)
 {
 	int ret;
 	bool use_lpm;
 	struct mipi_dsi_packet packet;
-	struct sec_mipi_dsim *dsim = to_sec_mipi_dsim(host);
+	struct sec_dsim *dsim = host_to_dsim(host);
 
 	if ((msg->rx_buf && !msg->rx_len) || (msg->rx_len && !msg->rx_buf))
 		return -EINVAL;
@@ -947,18 +943,18 @@ static ssize_t sec_mipi_dsim_host_transfer(struct mipi_dsi_host *host,
 
 	/* config LPM for CMD TX */
 	use_lpm = msg->flags & MIPI_DSI_MSG_USE_LPM ? true : false;
-	sec_mipi_dsim_config_cmd_lpm(dsim, use_lpm);
+	sec_dsim_config_cmd_lpm(dsim, use_lpm);
 
 	if (packet.payload_length) {		/* Long Packet case */
 		reinit_completion(&dsim->pl_tx_done);
 
 		/* write packet payload */
-		sec_mipi_dsim_write_pl_to_sfr_fifo(dsim,
+		sec_dsim_write_pl_to_sfr_fifo(dsim,
 						   packet.payload,
 						   packet.payload_length);
 
 		/* write packet header */
-		sec_mipi_dsim_write_ph_to_sfr_fifo(dsim,
+		sec_dsim_write_ph_to_sfr_fifo(dsim,
 						   packet.header,
 						   use_lpm);
 
@@ -972,7 +968,7 @@ static ssize_t sec_mipi_dsim_host_transfer(struct mipi_dsi_host *host,
 		reinit_completion(&dsim->ph_tx_done);
 
 		/* write packet header */
-		sec_mipi_dsim_write_ph_to_sfr_fifo(dsim,
+		sec_dsim_write_ph_to_sfr_fifo(dsim,
 						   packet.header,
 						   use_lpm);
 
@@ -993,7 +989,7 @@ static ssize_t sec_mipi_dsim_host_transfer(struct mipi_dsi_host *host,
 			return -EBUSY;
 		}
 
-		ret = sec_mipi_dsim_read_pl_from_sfr_fifo(dsim,
+		ret = sec_dsim_read_pl_from_sfr_fifo(dsim,
 							  msg->rx_buf,
 							  msg->rx_len);
 		if (ret < 0)
@@ -1003,16 +999,16 @@ static ssize_t sec_mipi_dsim_host_transfer(struct mipi_dsi_host *host,
 	return 0;
 }
 
-static const struct mipi_dsi_host_ops sec_mipi_dsim_host_ops = {
-	.attach   = sec_mipi_dsim_host_attach,
-	.detach   = sec_mipi_dsim_host_detach,
-	.transfer = sec_mipi_dsim_host_transfer,
+static const struct mipi_dsi_host_ops sec_dsim_host_ops = {
+	.attach   = sec_dsim_host_attach,
+	.detach   = sec_dsim_host_detach,
+	.transfer = sec_dsim_host_transfer,
 };
 
-static int sec_mipi_dsim_bridge_attach(struct drm_bridge *bridge,
+static int sec_dsim_bridge_attach(struct drm_bridge *bridge,
 				       enum drm_bridge_attach_flags flags)
 {
-	struct sec_mipi_dsim *dsim = bridge_to_dsim(bridge);
+	struct sec_dsim *dsim = bridge_to_dsim(bridge);
 	struct drm_bridge *panel_bridge;
 	struct drm_panel *panel;
 	int ret;
@@ -1037,7 +1033,7 @@ static int sec_mipi_dsim_bridge_attach(struct drm_bridge *bridge,
 				 flags);
 }
 
-static int sec_mipi_dsim_config_pll(struct sec_mipi_dsim *dsim)
+static int sec_dsim_config_pll(struct sec_dsim *dsim)
 {
 	int ret;
 	uint32_t pllctrl = 0, status, data_lanes_en, stop;
@@ -1075,7 +1071,7 @@ static int sec_mipi_dsim_config_pll(struct sec_mipi_dsim *dsim)
 	return 0;
 }
 
-static void sec_mipi_dsim_set_main_mode(struct sec_mipi_dsim *dsim)
+static void sec_dsim_set_main_mode(struct sec_dsim *dsim)
 {
 	uint32_t bpp, hfp_wc, hbp_wc, hsa_wc, wc;
 	uint32_t mdresol = 0, mvporch = 0, mhporch = 0, msync = 0;
@@ -1127,7 +1123,7 @@ static void sec_mipi_dsim_set_main_mode(struct sec_mipi_dsim *dsim)
 	dsim_write(dsim, msync, DSIM_MSYNC);
 }
 
-static void sec_mipi_dsim_config_dpi(struct sec_mipi_dsim *dsim)
+static void sec_dsim_config_dpi(struct sec_dsim *dsim)
 {
 	uint32_t config = 0, rgb_status = 0, data_lanes_en;
 
@@ -1205,11 +1201,11 @@ static void sec_mipi_dsim_config_dpi(struct sec_mipi_dsim *dsim)
 	dsim_write(dsim, config, DSIM_CONFIG);
 }
 
-static void sec_mipi_dsim_config_dphy(struct sec_mipi_dsim *dsim)
+static void sec_dsim_config_dphy(struct sec_dsim *dsim)
 {
-	struct sec_mipi_dsim_dphy_timing key = { 0 };
-	const struct sec_mipi_dsim_dphy_timing *match = NULL;
-	const struct sec_mipi_dsim_plat_data *pdata = dsim->pdata;
+	struct sec_dsim_dphy_timing key = { 0 };
+	const struct sec_dsim_dphy_timing *match = NULL;
+	const struct sec_dsim_plat_data *pdata = dsim->pdata;
 	uint32_t phytiming = 0, phytiming1 = 0, phytiming2 = 0, timeout = 0;
 	uint32_t hactive, vactive;
 	struct videomode *vmode = &dsim->vmode;
@@ -1235,7 +1231,7 @@ static void sec_mipi_dsim_config_dphy(struct sec_mipi_dsim *dsim)
 	}
 
 	match = bsearch(&key, pdata->dphy_timing, pdata->num_dphy_timing,
-			sizeof(struct sec_mipi_dsim_dphy_timing),
+			sizeof(struct sec_dsim_dphy_timing),
 			pdata->dphy_timing_cmp);
 	if (WARN_ON(!match))
 		return;
@@ -1260,7 +1256,7 @@ static void sec_mipi_dsim_config_dphy(struct sec_mipi_dsim *dsim)
 	dsim_write(dsim, timeout, DSIM_TIMEOUT);
 }
 
-static void sec_mipi_dsim_init_fifo_pointers(struct sec_mipi_dsim *dsim)
+static void sec_dsim_init_fifo_pointers(struct sec_dsim *dsim)
 {
 	uint32_t fifoctrl, fifo_ptrs;
 
@@ -1281,7 +1277,7 @@ static void sec_mipi_dsim_init_fifo_pointers(struct sec_mipi_dsim *dsim)
 	udelay(500);
 }
 
-static void sec_mipi_dsim_config_clkctrl(struct sec_mipi_dsim *dsim)
+static void sec_dsim_config_clkctrl(struct sec_dsim *dsim)
 {
 	uint32_t clkctrl = 0, data_lanes_en;
 	uint32_t byte_clk, esc_prescaler;
@@ -1312,7 +1308,7 @@ static void sec_mipi_dsim_config_clkctrl(struct sec_mipi_dsim *dsim)
 	dsim_write(dsim, clkctrl, DSIM_CLKCTRL);
 }
 
-static void sec_mipi_dsim_set_standby(struct sec_mipi_dsim *dsim,
+static void sec_dsim_set_standby(struct sec_dsim *dsim,
 				      bool standby)
 {
 	uint32_t mdresol = 0;
@@ -1327,7 +1323,7 @@ static void sec_mipi_dsim_set_standby(struct sec_mipi_dsim *dsim,
 	dsim_write(dsim, mdresol, DSIM_MDRESOL);
 }
 
-struct dsim_pll_pms *sec_mipi_dsim_calc_pmsk(struct sec_mipi_dsim *dsim)
+struct dsim_pll_pms *sec_dsim_calc_pmsk(struct sec_dsim *dsim)
 {
 	uint32_t p, m, s;
 	uint32_t best_p = 0, best_m = 0, best_s = 0;
@@ -1337,16 +1333,16 @@ struct dsim_pll_pms *sec_mipi_dsim_calc_pmsk(struct sec_mipi_dsim *dsim)
 	uint32_t delta, best_delta = ~0U;
 	struct dsim_pll_pms *pll_pms;
 	struct device *dev = dsim->dev;
-	const struct sec_mipi_dsim_plat_data *pdata = dsim->pdata;
-	struct sec_mipi_dsim_pll dpll = *pdata->dphy_pll;
-	struct sec_mipi_dsim_range *prange = &dpll.p;
-	struct sec_mipi_dsim_range *mrange = &dpll.m;
-	struct sec_mipi_dsim_range *srange = &dpll.s;
-	struct sec_mipi_dsim_range *krange = &dpll.k;
-	struct sec_mipi_dsim_range *fvco_range  = &dpll.fvco;
-	struct sec_mipi_dsim_range *fpref_range = &dpll.fpref;
-	struct sec_mipi_dsim_range pr_new = *prange;
-	struct sec_mipi_dsim_range sr_new = *srange;
+	const struct sec_dsim_plat_data *pdata = dsim->pdata;
+	struct sec_dsim_pll dpll = *pdata->dphy_pll;
+	struct sec_dsim_range *prange = &dpll.p;
+	struct sec_dsim_range *mrange = &dpll.m;
+	struct sec_dsim_range *srange = &dpll.s;
+	struct sec_dsim_range *krange = &dpll.k;
+	struct sec_dsim_range *fvco_range  = &dpll.fvco;
+	struct sec_dsim_range *fpref_range = &dpll.fpref;
+	struct sec_dsim_range pr_new = *prange;
+	struct sec_dsim_range sr_new = *srange;
 
 	pll_pms = devm_kzalloc(dev, sizeof(*pll_pms), GFP_KERNEL);
 	if (!pll_pms) {
@@ -1453,12 +1449,12 @@ struct dsim_pll_pms *sec_mipi_dsim_calc_pmsk(struct sec_mipi_dsim *dsim)
 	return pll_pms;
 }
 
-static int sec_mipi_dsim_check_pll_out(struct sec_mipi_dsim *dsim,
+static int sec_dsim_check_pll_out(struct sec_dsim *dsim,
 				       const struct drm_display_mode *mode)
 {
 	int bpp;
 	uint32_t pix_clk, bit_clk;
-	const struct sec_mipi_dsim_plat_data *pdata = dsim->pdata;
+	const struct sec_dsim_plat_data *pdata = dsim->pdata;
 	const struct dsim_hblank_par *hpar;
 	const struct dsim_pll_pms *pmsk;
 
@@ -1483,7 +1479,7 @@ static int sec_mipi_dsim_check_pll_out(struct sec_mipi_dsim *dsim,
 	dsim->hpar = NULL;
 
 	dev_info(dsim->dev, "pix_clk %d, bit_clk %d\n", dsim->pix_clk, dsim->bit_clk);
-	pmsk = sec_mipi_dsim_calc_pmsk(dsim);
+	pmsk = sec_dsim_calc_pmsk(dsim);
 	if (IS_ERR(pmsk)) {
 		dev_err(dsim->dev,
 			"failed to get pmsk for: fin = %u, fout = %u\n",
@@ -1496,12 +1492,12 @@ static int sec_mipi_dsim_check_pll_out(struct sec_mipi_dsim *dsim,
 		    PLLCTRL_SET_S(pmsk->s);
 
 	/* free 'dsim_pll_pms' structure data which is
-	 * allocated in 'sec_mipi_dsim_calc_pmsk()'.
+	 * allocated in 'sec_dsim_calc_pmsk()'.
 	 */
 	devm_kfree(dsim->dev, (void *)pmsk);
 
 	if (dsim->mode_flags & MIPI_DSI_MODE_VIDEO_SYNC_PULSE) {
-		hpar = sec_mipi_dsim_get_hblank_par(mode->name,
+		hpar = sec_dsim_get_hblank_par(mode->name,
 						    drm_mode_vrefresh(mode),
 						    dsim->lanes);
 		dsim->hpar = hpar;
@@ -1512,10 +1508,10 @@ static int sec_mipi_dsim_check_pll_out(struct sec_mipi_dsim *dsim,
 	return 0;
 }
 
-static void sec_mipi_dsim_bridge_enable(struct drm_bridge *bridge)
+static void sec_dsim_bridge_enable(struct drm_bridge *bridge)
 {
 	int ret;
-	struct sec_mipi_dsim *dsim = bridge_to_dsim(bridge);
+	struct sec_dsim *dsim = bridge_to_dsim(bridge);
 
 	dev_info(dsim->dev, "%s In!\n", __func__);
 
@@ -1525,41 +1521,41 @@ static void sec_mipi_dsim_bridge_enable(struct drm_bridge *bridge)
 
 	clk_prepare_enable(dsim->clk_cfg);
 
-	sec_mipi_dsim_irq_init(dsim);
+	sec_dsim_irq_init(dsim);
 
 	/* At this moment, the dsim bridge's preceding encoder has
 	 * already been enabled. So the dsim can be configed here
 	 */
 
 	/* config main display mode */
-	sec_mipi_dsim_set_main_mode(dsim);
+	sec_dsim_set_main_mode(dsim);
 
 	/* config dsim dpi */
-	sec_mipi_dsim_config_dpi(dsim);
+	sec_dsim_config_dpi(dsim);
 
 	/* config dsim pll */
-	ret = sec_mipi_dsim_config_pll(dsim);
+	ret = sec_dsim_config_pll(dsim);
 	if (ret) {
 		dev_err(dsim->dev, "dsim pll config failed: %d\n", ret);
 		return;
 	}
 
 	/* config dphy timings */
-	sec_mipi_dsim_config_dphy(dsim);
+	sec_dsim_config_dphy(dsim);
 
 	/* initialize FIFO pointers */
-	sec_mipi_dsim_init_fifo_pointers(dsim);
+	sec_dsim_init_fifo_pointers(dsim);
 
 	/* config esc clock, byte clock and etc */
-	sec_mipi_dsim_config_clkctrl(dsim);
+	sec_dsim_config_clkctrl(dsim);
 
 	/* enable data transfer of dsim */
-	sec_mipi_dsim_set_standby(dsim, true);
+	sec_dsim_set_standby(dsim, true);
 
 	return;
 }
 
-static void sec_mipi_dsim_disable_clkctrl(struct sec_mipi_dsim *dsim)
+static void sec_dsim_disable_clkctrl(struct sec_dsim *dsim)
 {
 	uint32_t clkctrl;
 
@@ -1574,7 +1570,7 @@ static void sec_mipi_dsim_disable_clkctrl(struct sec_mipi_dsim *dsim)
 	dsim_write(dsim, clkctrl, DSIM_CLKCTRL);
 }
 
-static void sec_mipi_dsim_disable_pll(struct sec_mipi_dsim *dsim)
+static void sec_dsim_disable_pll(struct sec_dsim *dsim)
 {
 	uint32_t pllctrl;
 
@@ -1585,19 +1581,19 @@ static void sec_mipi_dsim_disable_pll(struct sec_mipi_dsim *dsim)
 	dsim_write(dsim, pllctrl, DSIM_PLLCTRL);
 }
 
-static void sec_mipi_dsim_bridge_disable(struct drm_bridge *bridge)
+static void sec_dsim_bridge_disable(struct drm_bridge *bridge)
 {
-	struct sec_mipi_dsim *dsim = bridge_to_dsim(bridge);
+	struct sec_dsim *dsim = bridge_to_dsim(bridge);
 
 	dev_info(dsim->dev, "%s In!\n", __func__);
 	/* disable data transfer of dsim */
-	sec_mipi_dsim_set_standby(dsim, false);
+	sec_dsim_set_standby(dsim, false);
 
 	/* disable esc clock & byte clock */
-	sec_mipi_dsim_disable_clkctrl(dsim);
+	sec_dsim_disable_clkctrl(dsim);
 
 	/* disable dsim pll */
-	sec_mipi_dsim_disable_pll(dsim);
+	sec_dsim_disable_pll(dsim);
 
 	clk_disable_unprepare(dsim->clk_cfg);
 
@@ -1606,13 +1602,14 @@ static void sec_mipi_dsim_bridge_disable(struct drm_bridge *bridge)
 	release_bus_freq(BUS_FREQ_HIGH);
 }
 
-static bool sec_mipi_dsim_bridge_mode_fixup(struct drm_bridge *bridge,
+static bool sec_dsim_bridge_mode_fixup(struct drm_bridge *bridge,
 					    const struct drm_display_mode *mode,
 					    struct drm_display_mode *adjusted_mode)
 {
-	struct sec_mipi_dsim *dsim = bridge_to_dsim(bridge);
+	struct sec_dsim *dsim = bridge_to_dsim(bridge);
 	dev_info(dsim->dev, "%s In!\n", __func__);
 
+#if 0
 	/* the 'bus_flags' in connector's display_info is useless
 	 * for mipi dsim, since dsim only sends packets with no
 	 * polarities information in the packets. But the dsim
@@ -1629,32 +1626,20 @@ static bool sec_mipi_dsim_bridge_mode_fixup(struct drm_bridge *bridge,
 		adjusted_mode->flags &= ~DRM_MODE_FLAG_NVSYNC;
 		adjusted_mode->flags |= DRM_MODE_FLAG_PVSYNC;
 	}
+#else
 
-	/* workaround for CEA standard mode "1280x720@60"
-	 * display on 4 data lanes with Non-burst with sync
-	 * pulse DSI mode, since use the standard horizontal
-	 * timings cannot display correctly. And this code
-	 * cannot be put into the dsim Bridge's mode_fixup,
-	 * since the DSI device lane number change always
-	 * happens after that.
-	 */
-	if (!strcmp(mode->name, "1280x720") &&
-	    drm_mode_vrefresh(mode) == 60   &&
-	    dsim->lanes == 4		    &&
-	    dsim->mode_flags & MIPI_DSI_MODE_VIDEO_SYNC_PULSE) {
-		adjusted_mode->hsync_start += 2;
-		adjusted_mode->hsync_end   += 2;
-		adjusted_mode->htotal      += 2;
-	}
+	adjusted_mode->flags |= (DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC);
+	adjusted_mode->flags &= ~(DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC);
+#endif
 
 	return true;
 }
 
-static void sec_mipi_dsim_bridge_mode_set(struct drm_bridge *bridge,
+static void sec_dsim_bridge_mode_set(struct drm_bridge *bridge,
 					  const struct drm_display_mode *mode,
 					  const struct drm_display_mode *adjusted_mode)
 {
-	struct sec_mipi_dsim *dsim = bridge_to_dsim(bridge);
+	struct sec_dsim *dsim = bridge_to_dsim(bridge);
 	int ret;
 
 	dev_info(dsim->dev, "%s In!\n", __func__);
@@ -1666,7 +1651,7 @@ static void sec_mipi_dsim_bridge_mode_set(struct drm_bridge *bridge,
 	 * so it is called not every time atomic commit.
 	 */
 
-	ret = sec_mipi_dsim_check_pll_out(dsim, adjusted_mode);
+	ret = sec_dsim_check_pll_out(dsim, adjusted_mode);
 	if (ret) {
 		dev_err(dsim->dev, "failed to pll out (ret=%d)\n", ret);
 		return;
@@ -1675,18 +1660,22 @@ static void sec_mipi_dsim_bridge_mode_set(struct drm_bridge *bridge,
 	drm_display_mode_to_videomode(adjusted_mode, &dsim->vmode);
 }
 
-static const struct drm_bridge_funcs sec_mipi_dsim_bridge_funcs = {
-	.attach     = sec_mipi_dsim_bridge_attach,
-	.enable     = sec_mipi_dsim_bridge_enable,
-	.disable    = sec_mipi_dsim_bridge_disable,
-	.mode_set   = sec_mipi_dsim_bridge_mode_set,
-	.mode_fixup = sec_mipi_dsim_bridge_mode_fixup,
+static const struct drm_bridge_funcs sec_dsim_bridge_funcs = {
+	.attach     = sec_dsim_bridge_attach,
+	.enable     = sec_dsim_bridge_enable,
+	.disable    = sec_dsim_bridge_disable,
+	.mode_set   = sec_dsim_bridge_mode_set,
+	.mode_fixup = sec_dsim_bridge_mode_fixup,
+};
+
+static const struct drm_bridge_timings sec_dsim_bridge_timings = {
+	.input_bus_flags = DRM_BUS_FLAG_DE_LOW,
 };
 
 static inline int dphy_timing_default_cmp(const void *key, const void *elt)
 {
-	const struct sec_mipi_dsim_dphy_timing *_key = key;
-	const struct sec_mipi_dsim_dphy_timing *_elt = elt;
+	const struct sec_dsim_dphy_timing *_key = key;
+	const struct sec_dsim_dphy_timing *_elt = elt;
 
 	/* find an element whose 'bit_clk' is equal to the
 	 * the key's 'bit_clk' value or, the difference
@@ -1703,7 +1692,7 @@ static inline int dphy_timing_default_cmp(const void *key, const void *elt)
 		return -1;
 }
 
-static const struct sec_mipi_dsim_plat_data imx8mm_mipi_dsim_plat_data = {
+static const struct sec_dsim_plat_data imx8mm_mipi_dsim_plat_data = {
 	.version	= 0x1060200,
 	.max_data_lanes = 4,
 	.max_data_rate  = 1500000000ULL,
@@ -1713,20 +1702,20 @@ static const struct sec_mipi_dsim_plat_data imx8mm_mipi_dsim_plat_data = {
 	.dphy_timing_cmp = dphy_timing_default_cmp,
 };
 
-static const struct of_device_id imx_sec_dsim_dt_ids[] = {
+static const struct of_device_id sec_dsim_dt_ids[] = {
 	{
 		.compatible = "fsl,imx8mm-mipi-dsim",
 		.data = &imx8mm_mipi_dsim_plat_data,
 	},
 	{ /* sentinel */ }
 };
-MODULE_DEVICE_TABLE(of, imx_sec_dsim_dt_ids);
+MODULE_DEVICE_TABLE(of, sec_dsim_dt_ids);
 
-static int imx_sec_dsim_probe(struct platform_device *pdev)
+static int sec_dsim_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	const struct of_device_id *of_id;
-	struct sec_mipi_dsim *dsim;
+	struct sec_dsim *dsim;
 	struct resource *res;
 	int irq, version;
 	int ret;
@@ -1739,7 +1728,7 @@ static int imx_sec_dsim_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 
-	of_id = of_match_device(imx_sec_dsim_dt_ids, dev);
+	of_id = of_match_device(sec_dsim_dt_ids, dev);
 	if (!of_id)
 		return -ENODEV;
 
@@ -1787,7 +1776,7 @@ static int imx_sec_dsim_probe(struct platform_device *pdev)
 
 	dsim->pref_clk = PHY_REF_CLK;
 
-	ret = devm_request_irq(dev, irq, sec_mipi_dsim_irq_handler,
+	ret = devm_request_irq(dev, irq, sec_dsim_irq_handler,
 			       0, dev_name(dev), dsim);
 	if (ret) {
 		dev_err(dev, "failed to request dsim irq: %d\n", ret);
@@ -1799,43 +1788,45 @@ static int imx_sec_dsim_probe(struct platform_device *pdev)
 	init_completion(&dsim->pl_tx_done);
 	init_completion(&dsim->rx_done);
 
-	dsim->dsi_host.ops = &sec_mipi_dsim_host_ops;
-	dsim->dsi_host.dev = dsim->dev;
+	dsim->host.ops = &sec_dsim_host_ops;
+	dsim->host.dev = dsim->dev;
 
-	ret = mipi_dsi_host_register(&dsim->dsi_host);
+	ret = mipi_dsi_host_register(&dsim->host);
 	if (ret) {
 		dev_err(dev, "Unable to register mipi dsi host: %d\n", ret);
 		return ret;
 	}
 
 	dsim->bridge.driver_private = dsim;
-	dsim->bridge.funcs = &sec_mipi_dsim_bridge_funcs;
+	dsim->bridge.funcs = &sec_dsim_bridge_funcs;
 	dsim->bridge.of_node = dev->of_node;
+	dsim->bridge.timings = &sec_dsim_bridge_timings,
 
 	drm_bridge_add(&dsim->bridge);
 
 	return 0;
 }
 
-static int imx_sec_dsim_remove(struct platform_device *pdev)
+static int sec_dsim_remove(struct platform_device *pdev)
 {
-	struct sec_mipi_dsim *dsim = platform_get_drvdata(pdev);;
+	struct sec_dsim *dsim = platform_get_drvdata(pdev);;
 
-	mipi_dsi_host_unregister(&dsim->dsi_host);
+	mipi_dsi_host_unregister(&dsim->host);
 
 	return 0;
 }
 
-struct platform_driver imx_sec_dsim_driver = {
-	.probe    = imx_sec_dsim_probe,
-	.remove   = imx_sec_dsim_remove,
+struct platform_driver sec_dsim_driver = {
+	.probe    = sec_dsim_probe,
+	.remove   = sec_dsim_remove,
 	.driver   = {
 		.name = DRIVER_NAME,
-		.of_match_table = imx_sec_dsim_dt_ids,
+		.of_match_table = sec_dsim_dt_ids,
 	},
 };
 
-module_platform_driver(imx_sec_dsim_driver);
+module_platform_driver(sec_dsim_driver);
+
 MODULE_DESCRIPTION("Samsung MIPI DSI Host Controller bridge driver");
 MODULE_AUTHOR("Fancy Fang <chen.fang@nxp.com>");
 MODULE_LICENSE("GPL");
