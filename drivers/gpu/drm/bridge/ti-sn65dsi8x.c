@@ -55,7 +55,7 @@
 #define VS_NEG_POLARITY			BIT(5)
 #define LVDS_LINK_CFG			BIT(4)
 #define CHA_24BPP_MODE			BIT(3)
-#define CHA_SYNC_DELAY_LO		0x20
+#define CHA_SYNC_DELAY_LO		0x21
 #define CHA_SYNC_DELAY_HI		0x00
 
 enum sn65dsi_ports {
@@ -226,7 +226,8 @@ static void sn65dsi_enable(struct drm_bridge *bridge)
 		val |= HS_NEG_POLARITY;
 	if (bpp == 24) /* Channel A mode */
 		val |= CHA_24BPP_MODE;
-	regmap_write(sn->regmap, SN65DSI_LVDS_MODE, val);
+	regmap_write(sn->regmap, SN65DSI_LVDS_MODE, 0x1c);
+	regmap_write(sn->regmap, 0x19, 0x00);
 
 	/* TODO Channel B is not configure yet */
 	sn65dsi_configure_cha(sn, mode);
