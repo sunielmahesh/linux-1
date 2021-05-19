@@ -135,6 +135,9 @@ int imx_blk_ctl_power_on(struct generic_pm_domain *domain)
 
 	blk_ctl->power_count++;
 
+	mutex_unlock(&blk_ctl->lock);
+	return ret;
+
 disable_clk:
 	clk_bulk_disable_unprepare(blk_ctl->num_clks, blk_ctl->clks);
 
