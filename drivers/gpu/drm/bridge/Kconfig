@@ -189,6 +189,21 @@ config DRM_PARADE_PS8640
 	  The PS8640 is a high-performance and low-power
 	  MIPI DSI to eDP converter
 
+config DRM_SEC_MIPI_DSIM
+	tristate "Samsung SEC MIPI DSIM Bridge controller"
+	depends on DRM
+	depends on COMMON_CLK
+	depends on OF && HAS_IOMEM
+	select DRM_KMS_HELPER
+	select DRM_MIPI_DSI
+	select DRM_PANEL_BRIDGE
+	select GENERIC_PHY_MIPI_DPHY
+	select MFD_SYSCON
+	select REGMAP_MMIO
+	help
+	  This enables the Samsung SEC MIPI DSIM Bridge controller as
+	  for example found on NXP's i.MX8M Mini and Nano Processors.
+
 config DRM_SIL_SII8620
 	tristate "Silicon Image SII8620 HDMI/MHL bridge"
 	depends on OF
