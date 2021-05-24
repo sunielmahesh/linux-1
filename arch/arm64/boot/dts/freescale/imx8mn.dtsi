@@ -1031,6 +1031,58 @@
 				interrupts = <GIC_SPI 5 IRQ_TYPE_LEVEL_HIGH>;
 				power-domains = <&dispmix_blk_ctl IMX8MN_BLK_CTL_DISPMIX_LCDIF>;
 				status = "disabled";
+
+				port {
+					lcdif_to_dsim: endpoint {
+						remote-endpoint = <&dsim_from_lcdif>;
+					};
+				};
+			};
+
+			mipi_dsi: mipi_dsi@32e10000 {
+				compatible = "fsl,imx8mn-mipi-dsim", "fsl,imx8mm-mipi-dsim";
+				reg = <0x32e10000 0xa0>;
+				clocks = <&clk IMX8MN_CLK_DSI_CORE>,
+					 <&clk IMX8MN_CLK_DSI_PHY_REF>;
+				clock-names = "bus", "phy_ref";
+				assigned-clocks = <&clk IMX8MN_CLK_DSI_CORE>,
+						  <&clk IMX8MN_VIDEO_PLL1_OUT>,
+						  <&clk IMX8MN_CLK_DSI_PHY_REF>;
+				assigned-clock-parents = <&clk IMX8MN_SYS_PLL1_266M>,
+							 <&clk IMX8MN_VIDEO_PLL1_BYPASS>,
+							 <&clk IMX8MN_VIDEO_PLL1_OUT>;
+				assigned-clock-rates = <266000000>, <594000000>, <27000000>;
+				interrupts = <GIC_SPI 18 IRQ_TYPE_LEVEL_HIGH>;
+				phys = <&dphy>;
+				phy-names = "dphy";
+				power-domains = <&dispmix_blk_ctl IMX8MN_BLK_CTL_DISPMIX_MIPI_DSI>;
+				samsung,burst-clock-frequency = <891000000>;
+				samsung,esc-clock-frequency = <54000000>;
+				samsung,pll-clock-frequency = <27000000>;
+				status = "disabled";
+
+				ports {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					port@0 {
+						reg = <0>;
+
+						dsim_from_lcdif: endpoint {
+							remote-endpoint = <&lcdif_to_dsim>;
+						};
+					};
+				};
+			};
+
+			dphy: dphy@32e100a4 {
+				compatible = "fsl,imx8mn-mipi-dphy", "fsl,imx8mm-mipi-dphy";
+				reg = <0x32e100a4 0xbc>;
+				clocks = <&clk IMX8MN_CLK_DSI_PHY_REF>;
+				clock-names = "phy_ref";
+				#phy-cells = <0>;
+				power-domains = <&dispmix_blk_ctl IMX8MN_BLK_CTL_DISPMIX_MIPI_DPHY>;
+				status = "disabled";
 			};
 
 			dispmix_blk_ctl: blk-ctl@32e28000 {
