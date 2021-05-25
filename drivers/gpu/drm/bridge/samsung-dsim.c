@@ -588,7 +588,7 @@ static unsigned long samsung_dsim_set_pll(struct samsung_dsim *dsi,
 			"failed to find PLL PMS for requested frequency\n");
 		return 0;
 	}
-	dev_dbg(dsi->dev, "PLL freq %lu, (p %d, m %d, s %d)\n", fout, p, m, s);
+	dev_info(dsi->dev, "PLL freq %lu, (p %d, m %d, s %d)\n", fout, p, m, s);
 
 	dsim_write(dsi, driver_data->reg_values[PLL_TIMER], driver_data->plltmr_reg);
 
@@ -612,6 +612,7 @@ static unsigned long samsung_dsim_set_pll(struct samsung_dsim *dsi,
 		reg |= DSIM_FREQ_BAND(band);
 	}
 
+	dev_info(dsi->dev, "PLLCTRL = reg 0x%x\n", reg);
 	samsung_dsim_write(dsi, DSIM_PLLCTRL_REG, reg);
 
 	timeout = 1000;
@@ -647,8 +648,8 @@ static int samsung_dsim_enable_clock(struct samsung_dsim *dsi)
 		esc_clk = byte_clk / esc_div;
 	}
 
-	dev_dbg(dsi->dev, "hs_clk = %lu, byte_clk = %lu, esc_clk = %lu\n",
-		hs_clk, byte_clk, esc_clk);
+	dev_info(dsi->dev, "PLL: hs_clk = %lu, byte_clk = %lu, esc_clk = %lu, esc_div = %lu\n",
+		hs_clk, byte_clk, esc_clk, esc_div);
 
 	reg = samsung_dsim_read(dsi, DSIM_CLKCTRL_REG);
 	reg &= ~(DSIM_ESC_PRESCALER_MASK | DSIM_LANE_ESC_CLK_EN_CLK

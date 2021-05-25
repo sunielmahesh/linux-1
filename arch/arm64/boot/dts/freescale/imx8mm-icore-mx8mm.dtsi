@@ -230,3 +230,12 @@
 	non-removable;
 	status = "okay";
 };
+
+&usbotg2 {
+       dr_mode = "host";
+       hnp-disable;
+       srp-disable;
+       adp-disable;
+       usb-role-switch;
+       status = "okay";
+};

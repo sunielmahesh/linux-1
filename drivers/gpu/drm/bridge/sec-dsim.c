@@ -25,6 +25,7 @@
 #include <linux/busfreq-imx.h>
 #include <linux/of_device.h>
 #include <linux/of_graph.h>
+#include <linux/phy/phy.h>
 #include <linux/mfd/syscon.h>
 #include <linux/regmap.h>
 #include <drm/drm_atomic_helper.h>
@@ -128,6 +129,7 @@
 #define CONFIG_SET_LANEEN(x)		REG_PUT(x,  4,  0)
 
 #define ESCMODE_SET_STOPSTATE_CNT(X)	REG_PUT(x, 31, 21)
+#define ESCMODE_SET_STOPSTATE_CNT_MASK	(0x7ff << 21)
 #define ESCMODE_FORCESTOPSTATE		BIT(20)
 #define ESCMODE_FORCEBTA		BIT(16)
 #define ESCMODE_CMDLPDT			BIT(7)
@@ -362,6 +364,7 @@ struct sec_dsim {
 	void __iomem *base;
 	int irq;
 
+	struct phy *phy;
 	struct clk *clk_cfg;
 	struct clk *clk_pllref;
 	struct clk *pclk;			/* pixel clock */
@@ -416,11 +419,13 @@ static u32 dsim_read(struct sec_dsim *dsim, u32 reg)
 	unsigned int val;
 	int ret;
 
+	printk("1. %s: 0x%x\n", __func__, reg);
 	ret = regmap_read(dsim->regmap, reg, &val);
 	if (ret < 0)
 		dev_err(dsim->dev, "failed to read SEC DSIM reg 0x%x: %d\n",
 			reg, ret);
 
+	printk("%s\n", __func__);
 	return val;
 }
 
@@ -729,44 +734,13 @@ static int sec_dsim_host_attach(struct mipi_dsi_host *host,
 				     struct mipi_dsi_device *dsi)
 {
 	struct sec_dsim *dsim = host_to_dsim(host);
-	const struct sec_dsim_plat_data *pdata = dsim->pdata;
-	struct device *dev = dsim->dev;
-
-	if (!dsi->lanes || dsi->lanes > pdata->max_data_lanes) {
-		dev_err(dev, "invalid data lanes number\n");
-		return -EINVAL;
-	}
-
-	if (dsim->channel)
-		return -EINVAL;
-
-	if (!(dsi->mode_flags & MIPI_DSI_MODE_VIDEO)		||
-	    !((dsi->mode_flags & MIPI_DSI_MODE_VIDEO_BURST)	||
-	      (dsi->mode_flags & MIPI_DSI_MODE_VIDEO_SYNC_PULSE))) {
-		dev_err(dev, "unsupported dsi mode: %#lx\n", dsi->mode_flags);
-		return -EINVAL;
-	}
-
-	if (dsi->format != MIPI_DSI_FMT_RGB888 &&
-	    dsi->format != MIPI_DSI_FMT_RGB565 &&
-	    dsi->format != MIPI_DSI_FMT_RGB666 &&
-	    dsi->format != MIPI_DSI_FMT_RGB666_PACKED) {
-		dev_err(dev, "unsupported pixel format: %#x\n", dsi->format);
-		return -EINVAL;
-	}
-
-	/* TODO: DSIM 3 lanes has some display issue, so
-	 * avoid 3 lanes enable, and force data lanes to
-	 * be 2.
-	 */
-	if (dsi->lanes == 3)
-		dsi->lanes = 2;
 
 	dsim->lanes	 = dsi->lanes;
 	dsim->channel	 = dsi->channel;
 	dsim->format	 = dsi->format;
 	dsim->mode_flags = dsi->mode_flags;
 
+	dev_info(dsim->dev, "%s end!\n", __func__);
 	return 0;
 }
 
@@ -1038,11 +1012,12 @@ static int sec_dsim_config_pll(struct sec_dsim *dsim)
 	int ret;
 	uint32_t pllctrl = 0, status, data_lanes_en, stop;
 
-	dsim_write(dsim, 0x8000, DSIM_PLLTMR);
+	dsim_write(dsim, 0x1f4, DSIM_PLLTMR);
 
 	/* TODO: config dp/dn swap if requires */
 
 	pllctrl |= PLLCTRL_SET_PMS(dsim->pms) | PLLCTRL_PLLEN;
+	pllctrl = 0x0080c630;
 	dsim_write(dsim, pllctrl, DSIM_PLLCTRL);
 
 	ret = wait_for_completion_timeout(&dsim->pll_stable, HZ / 10);
@@ -1083,7 +1058,7 @@ static void sec_dsim_set_main_mode(struct sec_dsim *dsim)
 
 	mvporch |= MVPORCH_SET_MAINVBP(vmode->vback_porch)    |
 		   MVPORCH_SET_STABLEVFP(vmode->vfront_porch) |
-		   MVPORCH_SET_CMDALLOW(0x0);
+		   MVPORCH_SET_CMDALLOW(0xf);
 	dsim_write(dsim, mvporch, DSIM_MVPORCH);
 
 	bpp = mipi_dsi_pixel_format_to_bpp(dsim->format);
@@ -1132,18 +1107,18 @@ static void sec_dsim_config_dpi(struct sec_dsim *dsim)
 	else
 		rgb_status |= RGB_STATUS_CMDMODE_INSEL;
 
-	dsim_write(dsim, rgb_status, DSIM_RGB_STATUS);
+	//dsim_write(dsim, rgb_status, DSIM_RGB_STATUS);
 
 	if (dsim->mode_flags & MIPI_DSI_CLOCK_NON_CONTINUOUS) {
 		config |= CONFIG_NON_CONTINUOUS_CLOCK_LANE;
 		config |= CONFIG_CLKLANE_STOP_START;
 	}
 
-	if (dsim->mode_flags & MIPI_DSI_MODE_VSYNC_FLUSH)
+	if (!(dsim->mode_flags & MIPI_DSI_MODE_VSYNC_FLUSH))
 		config |= CONFIG_MFLUSH_VS;
 
 	/* disable EoT packets in HS mode */
-	if (dsim->mode_flags & MIPI_DSI_MODE_EOT_PACKET)
+	if (!(dsim->mode_flags & MIPI_DSI_MODE_EOT_PACKET))
 		config |= CONFIG_EOT_R03;
 
 	if (dsim->mode_flags & MIPI_DSI_MODE_VIDEO) {
@@ -1161,13 +1136,13 @@ static void sec_dsim_config_dpi(struct sec_dsim *dsim)
 		if (dsim->mode_flags & MIPI_DSI_MODE_VIDEO_HSE)
 			config |= CONFIG_HSEDISABLEMODE;
 
-		if (dsim->mode_flags & MIPI_DSI_MODE_VIDEO_HFP)
+		if (!(dsim->mode_flags & MIPI_DSI_MODE_VIDEO_HFP))
 			config |= CONFIG_HFPDISABLEMODE;
 
-		if (dsim->mode_flags & MIPI_DSI_MODE_VIDEO_HBP)
+		if (!(dsim->mode_flags & MIPI_DSI_MODE_VIDEO_HBP))
 			config |= CONFIG_HBPDISABLEMODE;
 
-		if (dsim->mode_flags & MIPI_DSI_MODE_VIDEO_HSA)
+		if (!(dsim->mode_flags & MIPI_DSI_MODE_VIDEO_HSA))
 			config |= CONFIG_HSADISABLEMODE;
 	}
 
@@ -1199,6 +1174,9 @@ static void sec_dsim_config_dpi(struct sec_dsim *dsim)
 	config |= CONFIG_SET_LANEEN(0x1 | data_lanes_en << 1);
 
 	dsim_write(dsim, config, DSIM_CONFIG);
+
+	config = 0x01e00000;
+	dsim_write(dsim, config, DSIM_ESCMODE);
 }
 
 static void sec_dsim_config_dphy(struct sec_dsim *dsim)
@@ -1211,6 +1189,7 @@ static void sec_dsim_config_dphy(struct sec_dsim *dsim)
 	struct videomode *vmode = &dsim->vmode;
 	struct drm_display_mode mode;
 
+	dev_info(dsim->dev, "%s In!\n", __func__);
 	key.bit_clk = DIV_ROUND_CLOSEST_ULL(dsim->bit_clk, 1000);
 
 	/* '1280x720@60Hz' mode with 2 data lanes
@@ -1238,21 +1217,24 @@ static void sec_dsim_config_dphy(struct sec_dsim *dsim)
 
 	phytiming  |= PHYTIMING_SET_M_TLPXCTL(match->lpx)	|
 		      PHYTIMING_SET_M_THSEXITCTL(match->hs_exit);
+	phytiming = 0x0000060b;
 	dsim_write(dsim, phytiming, DSIM_PHYTIMING);
 
 	phytiming1 |= PHYTIMING1_SET_M_TCLKPRPRCTL(match->clk_prepare)	|
 		      PHYTIMING1_SET_M_TCLKZEROCTL(match->clk_zero)	|
 		      PHYTIMING1_SET_M_TCLKPOSTCTL(match->clk_post)	|
 		      PHYTIMING1_SET_M_TCLKTRAILCTL(match->clk_trail);
+	phytiming1 = 0x07260d08;
 	dsim_write(dsim, phytiming1, DSIM_PHYTIMING1);
 
 	phytiming2 |= PHYTIMING2_SET_M_THSPRPRCTL(match->hs_prepare)	|
 		      PHYTIMING2_SET_M_THSZEROCTL(match->hs_zero)	|
 		      PHYTIMING2_SET_M_THSTRAILCTL(match->hs_trail);
+	phytiming2 = 0x00080d0b;
 	dsim_write(dsim, phytiming2, DSIM_PHYTIMING2);
 
 	timeout |= TIMEOUT_SET_BTAOUT(0xff)	|
-		   TIMEOUT_SET_LPDRTOUT(0xff);
+		   TIMEOUT_SET_LPDRTOUT(0xffff);
 	dsim_write(dsim, timeout, DSIM_TIMEOUT);
 }
 
@@ -1521,6 +1503,12 @@ static void sec_dsim_bridge_enable(struct drm_bridge *bridge)
 
 	clk_prepare_enable(dsim->clk_cfg);
 
+	ret = phy_power_on(dsim->phy);
+	if (ret) {
+		dev_err(dsim->dev, "cannot enable phy %d\n", ret);
+		return;
+	}
+
 	sec_dsim_irq_init(dsim);
 
 	/* At this moment, the dsim bridge's preceding encoder has
@@ -1609,28 +1597,8 @@ static bool sec_dsim_bridge_mode_fixup(struct drm_bridge *bridge,
 	struct sec_dsim *dsim = bridge_to_dsim(bridge);
 	dev_info(dsim->dev, "%s In!\n", __func__);
 
-#if 0
-	/* the 'bus_flags' in connector's display_info is useless
-	 * for mipi dsim, since dsim only sends packets with no
-	 * polarities information in the packets. But the dsim
-	 * host has some polarities requirements for the CRTC:
-	 * dsim only can accpet active high Vsync, Hsync and DE
-	 * signals.
-	 */
-	if (adjusted_mode->flags & DRM_MODE_FLAG_NHSYNC) {
-		adjusted_mode->flags &= ~DRM_MODE_FLAG_NHSYNC;
-		adjusted_mode->flags |= DRM_MODE_FLAG_PHSYNC;
-	}
-
-	if (adjusted_mode->flags & DRM_MODE_FLAG_NVSYNC) {
-		adjusted_mode->flags &= ~DRM_MODE_FLAG_NVSYNC;
-		adjusted_mode->flags |= DRM_MODE_FLAG_PVSYNC;
-	}
-#else
-
 	adjusted_mode->flags |= (DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC);
 	adjusted_mode->flags &= ~(DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC);
-#endif
 
 	return true;
 }
@@ -1720,8 +1688,6 @@ static int sec_dsim_probe(struct platform_device *pdev)
 	int irq, version;
 	int ret;
 
-	dev_info(dev, "%s: dsim probe begin\n", __func__);
-
 	dsim = devm_kzalloc(dev, sizeof(*dsim), GFP_KERNEL);
 	if (!dsim) {
 		dev_err(dev, "Unable to allocate 'dsim'\n");
@@ -1734,14 +1700,14 @@ static int sec_dsim_probe(struct platform_device *pdev)
 
 	dsim->pdata = of_id->data;
 	dsim->dev = dev;
-	dev_set_drvdata(dev, dsim);
+
+	init_completion(&dsim->pll_stable);
+	init_completion(&dsim->ph_tx_done);
+	init_completion(&dsim->pl_tx_done);
+	init_completion(&dsim->rx_done);
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res)
-		return -ENODEV;
-
-	irq = platform_get_irq(pdev, 0);
-	if (irq < 0)
 		return -ENODEV;
 
 	dsim->base = devm_ioremap_resource(dev, res);
@@ -1756,25 +1722,9 @@ static int sec_dsim_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	dsim->clk_pllref = devm_clk_get(dev, "bus_clk");
-	if (IS_ERR(dsim->clk_pllref)) {
-		ret = PTR_ERR(dsim->clk_pllref);
-		dev_err(dev, "Unable to get phy pll reference clock: %d\n", ret);
-		return ret;
-	}
-
-	dsim->clk_cfg = devm_clk_get(dev, "sclk_mipi");
-	if (IS_ERR(dsim->clk_cfg)) {
-		ret = PTR_ERR(dsim->clk_cfg);
-		dev_err(dev, "Unable to get configuration clock: %d\n", ret);
-		return ret;
-	}
-
-	version = dsim_read(dsim, DSIM_VERSION);
-	WARN_ON(version != dsim->pdata->version);
-	dev_info(dev, "version number is %#x\n", version);
-
-	dsim->pref_clk = PHY_REF_CLK;
+	irq = platform_get_irq(pdev, 0);
+	if (irq < 0)
+		return -ENODEV;
 
 	ret = devm_request_irq(dev, irq, sec_dsim_irq_handler,
 			       0, dev_name(dev), dsim);
@@ -1783,10 +1733,33 @@ static int sec_dsim_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	init_completion(&dsim->pll_stable);
-	init_completion(&dsim->ph_tx_done);
-	init_completion(&dsim->pl_tx_done);
-	init_completion(&dsim->rx_done);
+	dsim->phy = devm_phy_get(dev, "dsim");
+        if (IS_ERR(dsim->phy)) {
+                dev_info(dev, "failed to get dsim phy\n");
+                return PTR_ERR(dsim->phy);
+        }
+
+	dsim->clk_pllref = devm_clk_get(dev, "bus_clk");
+	if (IS_ERR(dsim->clk_pllref)) {
+		ret = PTR_ERR(dsim->clk_pllref);
+		dev_err(dev, "Unable to get phy pll reference clock: %d\n", ret);
+		return ret;
+	}
+
+	dev_info(dev, "%s: 7\n", __func__);
+	dsim->clk_cfg = devm_clk_get(dev, "sclk_mipi");
+	if (IS_ERR(dsim->clk_cfg)) {
+		ret = PTR_ERR(dsim->clk_cfg);
+		dev_err(dev, "Unable to get configuration clock: %d\n", ret);
+		return ret;
+	}
+
+	dsim->pref_clk = PHY_REF_CLK;
+
+	dev_info(dev, "%s: 8\n", __func__);
+//	version = dsim_read(dsim, DSIM_VERSION);
+//	WARN_ON(version != dsim->pdata->version);
+//	dev_info(dev, "version number is %#x\n", version);
 
 	dsim->host.ops = &sec_dsim_host_ops;
 	dsim->host.dev = dsim->dev;
@@ -1801,9 +1774,11 @@ static int sec_dsim_probe(struct platform_device *pdev)
 	dsim->bridge.funcs = &sec_dsim_bridge_funcs;
 	dsim->bridge.of_node = dev->of_node;
 	dsim->bridge.timings = &sec_dsim_bridge_timings,
+	dev_set_drvdata(dev, dsim);
 
 	drm_bridge_add(&dsim->bridge);
 
+	dev_info(dev, "%s: end!\n", __func__);
 	return 0;
 }
 
