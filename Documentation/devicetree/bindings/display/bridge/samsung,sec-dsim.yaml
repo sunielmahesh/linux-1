@@ -1,0 +1,187 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/display/bridge/samsung,sec-dsim.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Samsung SEC MIPI DSIM Bridge controller on i.MX8M Mini and Nano SoCs
+
+maintainers:
+  - Jagan Teki <jagan@amarulasolutions.com>
+
+description: |
+  NWL MIPI-DSI host controller found on i.MX8 platforms. This is a dsi bridge for
+  the SOCs NWL MIPI-DSI host controller.
+
+allOf:
+  - $ref: ../dsi-controller.yaml#
+
+properties:
+  compatible:
+    oneOf:
+      - const: fsl,imx8mm-sec-dsim
+      - items:
+          - const: fsl,imx8mn-sec-dsim
+          - const: fsl,imx8mm-sec-dsim
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    maxItems: 1
+
+  '#address-cells':
+    const: 1
+
+  '#size-cells':
+    const: 0
+
+  assigned-clock-parents: true
+  assigned-clock-rates: true
+  assigned-clocks: true
+
+  clocks:
+    items:
+      - description: DSI bus clock
+      - description: PHY_REF clock
+
+  clock-names:
+    items:
+      - const: bus
+      - const: phy_ref
+
+  phys:
+    maxItems: 1
+    description:
+      A phandle to the phy module representing the DPHY
+
+  phy-names:
+    items:
+      - const: dphy
+
+  power-domains:
+    maxItems: 1
+
+  samsung,burst-clock-frequency:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description:
+      DSIM high speed burst mode frequency.
+
+  samsung,esc-clock-frequency:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description:
+      DSIM escape mode frequency.
+
+  samsung,pll-clock-frequency:
+    $ref: /schemas/types.yaml#/definitions/uint32
+    description:
+      DSIM oscillator clock frequency.
+
+  ports:
+    $ref: /schemas/graph.yaml#/properties/ports
+
+    properties:
+      port@0:
+        $ref: /schemas/graph.yaml#/$defs/port-base
+        description:
+          Input port node to receive pixel data from the
+          display controller. Exactly one endpoint must be
+          specified.
+        properties:
+          endpoint@0:
+            $ref: /schemas/graph.yaml#/properties/endpoint
+            description: sub-node describing the input from LCDIF
+
+          endpoint@1:
+            $ref: /schemas/graph.yaml#/properties/endpoint
+            description: sub-node describing the input from DCSS
+
+        oneOf:
+          - required:
+              - endpoint@0
+          - required:
+              - endpoint@1
+
+        unevaluatedProperties: false
+
+      port@1:
+        $ref: /schemas/graph.yaml#/properties/port
+        description:
+          DSI output port node to the panel or the next bridge
+          in the chain
+
+    required:
+      - port@0
+      - port@1
+
+required:
+  - '#address-cells'
+  - '#size-cells'
+  - clock-names
+  - clocks
+  - compatible
+  - interrupts
+  - phy-names
+  - phys
+  - ports
+  - reg
+  - samsung,burst-clock-frequency
+  - samsung,esc-clock-frequency
+  - samsung,pll-clock-frequency
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/clock/imx8mm-clock.h>
+    #include <dt-bindings/power/imx8mm-power.h>
+    #include <dt-bindings/gpio/gpio.h>
+    #include <dt-bindings/interrupt-controller/arm-gic.h>
+
+    dsi: dsi@32e10000 {
+      compatible = "fsl,imx8mm-sec-dsim";
+      reg = <0x32e10000 0xa0>;
+      clocks = <&clk IMX8MM_CLK_DSI_CORE>,
+               <&clk IMX8MM_CLK_DSI_PHY_REF>;
+      clock-names = "bus", "phy_ref";
+      assigned-clocks = <&clk IMX8MM_CLK_DSI_CORE>,
+                        <&clk IMX8MM_VIDEO_PLL1_OUT>,
+                        <&clk IMX8MM_CLK_DSI_PHY_REF>;
+      assigned-clock-parents = <&clk IMX8MM_SYS_PLL1_266M>,
+                               <&clk IMX8MM_VIDEO_PLL1_BYPASS>,
+                               <&clk IMX8MM_VIDEO_PLL1_OUT>;
+      assigned-clock-rates = <266000000>, <594000000>, <27000000>;
+      interrupts = <GIC_SPI 18 IRQ_TYPE_LEVEL_HIGH>;
+      phys = <&dphy>;
+      phy-names = "dphy";
+      power-domains = <&dispmix_blk_ctl IMX8MM_BLK_CTL_PD_DISPMIX_MIPI_DSI>;
+      samsung,burst-clock-frequency = <891000000>;
+      samsung,esc-clock-frequency = <54000000>;
+      samsung,pll-clock-frequency = <27000000>;
+      #address-cells = <1>;
+      #size-cells = <0>;
+
+      ports {
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        port@0 {
+          reg = <0>;
+          #size-cells = <0>;
+          #address-cells = <1>;
+
+          dsi_in_lcdif: endpoint@0 {
+            reg = <0>;
+            remote-endpoint = <&lcdif_out_dsi>;
+          };
+        };
+
+        port@1 {
+          reg = <1>;
+
+          dsi_out_panel: endpoint {
+            remote-endpoint = <&panel_in_dsi>;
+          };
+        };
+      };
+    };
