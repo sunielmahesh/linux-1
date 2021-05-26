@@ -873,6 +873,11 @@ static void sec_dsim_video_mode(struct sec_dsim *dsim)
 	vbp = mode->vtotal - mode->vsync_end;
 	vsa = mode->vsync_end - mode->vsync_start;
 
+	DRM_DEV_INFO(dsim->dev, "H: active %d, fp %d, bp %d, sa %d\n",
+		     mode->hdisplay, hfp, hbp, hsa);
+	DRM_DEV_INFO(dsim->dev, "V: active %d, fp %d, bp %d, sa %d\n",
+		     mode->vdisplay, vfp, vbp, vsa);
+
 	if (dsim->mode_flags & MIPI_DSI_MODE_VIDEO_SYNC_PULSE) {
 		hpar = sec_dsim_get_hblank_par(dsim);
 		if (!hpar)
@@ -953,6 +958,9 @@ static void sec_dsim_config_bridge(struct sec_dsim *dsim)
 {
 	const struct sec_dsim_plat_data *pdata = dsim->pdata;
 	u32 reg;
+
+	DRM_DEV_INFO(dsim->dev, "mode_flags 0x%lx, lanes %d\n",
+		     dsim->mode_flags, dsim->lanes);
 
 	reg = dsim_read(dsim, DSIM_CONFIG);
 
@@ -1117,8 +1125,8 @@ static unsigned long sec_dsim_set_pll(struct sec_dsim *dsim)
 			      "failed to find PLL PMS for requested frequency\n");
 		return 0;
 	}
-	DRM_DEV_DEBUG(dsim->dev,
-		      "PLL freq %lu, (p %d, m %d, s %d)\n", fout, p, m, s);
+	DRM_DEV_INFO(dsim->dev,
+		     "PLL freq %lu, (p %d, m %d, s %d)\n", fout, p, m, s);
 
 	reg = PLLCTRL_PLLEN | PLLCTRL_PMS_P(p) | PLLCTRL_PMS_M(m) | PLLCTRL_PMS_S(s);
 
@@ -1155,9 +1163,9 @@ static int sec_dsim_enable_clock(struct sec_dsim *dsim)
 		esc_clk = byte_clk / esc_div;
 	}
 
-	DRM_DEV_DEBUG(dsim->dev,
-		      "PLL: hs_clk = %lu, byte_clk = %lu, esc_clk = %lu, esc_div = %lu\n",
-		      hs_clk, byte_clk, esc_clk, esc_div);
+	DRM_DEV_INFO(dsim->dev,
+		     "PLL: hs_clk = %lu, byte_clk = %lu, esc_clk = %lu, esc_div = %lu\n",
+		     hs_clk, byte_clk, esc_clk, esc_div);
 
 	/* clk control */
 	reg = dsim_read(dsim, DSIM_CLKCTRL);
