@@ -1130,6 +1130,7 @@ static unsigned long sec_dsim_set_pll(struct sec_dsim *dsim)
 
 	reg = PLLCTRL_PLLEN | PLLCTRL_PMS_P(p) | PLLCTRL_PMS_M(m) | PLLCTRL_PMS_S(s);
 
+	reg = 0x00804786;
 	dsim_write(dsim, DSIM_PLLCTRL, reg);
 
 	regmap_read_poll_timeout(dsim->regmap, DSIM_STATUS, reg,
