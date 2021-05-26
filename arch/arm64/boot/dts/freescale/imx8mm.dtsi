@@ -1049,14 +1049,14 @@
 				status = "disabled";
 
 				port {
-					lcdif_to_dsim: endpoint {
-						remote-endpoint = <&dsim_from_lcdif>;
+					lcdif_out_dsi: endpoint {
+						remote-endpoint = <&dsi_in_lcdif>;
 					};
 				};
 			};
 
-			mipi_dsi: mipi_dsi@32e10000 {
-				compatible = "fsl,imx8mm-mipi-dsim";
+			dsi: dsi@32e10000 {
+				compatible = "fsl,imx8mm-sec-dsim";
 				reg = <0x32e10000 0xa0>;
 				clocks = <&clk IMX8MM_CLK_DSI_CORE>,
 					 <&clk IMX8MM_CLK_DSI_PHY_REF>;
@@ -1083,9 +1083,12 @@
 
 					port@0 {
 						reg = <0>;
+						#address-cells = <1>;
+						#size-cells = <0>;
 
-						dsim_from_lcdif: endpoint {
-							remote-endpoint = <&lcdif_to_dsim>;
+						dsi_in_lcdif: endpoint@0 {
+							reg = <0>;
+							remote-endpoint = <&lcdif_out_dsi>;
 						};
 					};
 				};
