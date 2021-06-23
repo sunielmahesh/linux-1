@@ -385,7 +385,20 @@ const struct dsim_hblank_par *sec_dsim_get_hblank_par(struct sec_dsim *dsim)
 	return NULL;
 }
 
-static void dsim_write(struct sec_dsim *dsim, unsigned int reg, u32 val)
+static void dsim_update(struct sec_dsim *dsim, unsigned int reg,
+			unsigned int mask, unsigned int val)
+{
+	int ret;
+
+	ret = regmap_update_bits(dsim->regmap, reg, mask, val);
+	if (ret < 0)
+		DRM_DEV_ERROR(dsim->dev,
+			      "failed to update sec dsim reg 0x%x: %d\n",
+			      reg, ret);
+}
+
+static void dsim_write(struct sec_dsim *dsim, unsigned int reg,
+		       unsigned int val)
 {
 	int ret;
 
@@ -396,7 +409,7 @@ static void dsim_write(struct sec_dsim *dsim, unsigned int reg, u32 val)
 			      reg, ret);
 }
 
-static u32 dsim_read(struct sec_dsim *dsim, u32 reg)
+static int dsim_read(struct sec_dsim *dsim, unsigned int reg)
 {
 	unsigned int val;
 	int ret;
@@ -410,56 +423,9 @@ static u32 dsim_read(struct sec_dsim *dsim, u32 reg)
 	return val;
 }
 
-static void __maybe_unused sec_dsim_irq_mask(struct sec_dsim *dsim,
-						  int irq_idx)
+static void sec_dsim_irq_unmask(struct sec_dsim *dsim, int irq_idx)
 {
-	uint32_t intmsk;
-
-	intmsk = dsim_read(dsim, DSIM_INTMSK);
-
-	switch (irq_idx) {
-	case PLLSTABLE:
-		intmsk |= INTMSK_MSKPLLSTABLE;
-		break;
-	case SWRSTRELEASE:
-		intmsk |= INTMSK_MSKSWRELEASE;
-		break;
-	case SFRPLFIFOEMPTY:
-		intmsk |= INTMSK_MSKSFRPLFIFOEMPTY;
-		break;
-	case SFRPHFIFOEMPTY:
-		intmsk |= INTMSK_MSKSFRPHFIFOEMPTY;
-		break;
-	case FRAMEDONE:
-		intmsk |= INTMSK_MSKFRAMEDONE;
-		break;
-	case LPDRTOUT:
-		intmsk |= INTMSK_MSKLPDRTOUT;
-		break;
-	case TATOUT:
-		intmsk |= INTMSK_MSKTATOUT;
-		break;
-	case RXDATDONE:
-		intmsk |= INTMSK_MSKRXDATDONE;
-		break;
-	case RXTE:
-		intmsk |= INTMSK_MSKRXTE;
-		break;
-	case RXACK:
-		intmsk |= INTMSK_MSKRXACK;
-		break;
-	default:
-		/* unsupported irq */
-		return;
-	}
-
-	dsim_write(dsim, DSIM_INTMSK, intmsk);
-}
-
-static void sec_dsim_irq_unmask(struct sec_dsim *dsim,
-				     int irq_idx)
-{
-	uint32_t intmsk;
+	unsigned int intmsk;
 
 	intmsk = dsim_read(dsim, DSIM_INTMSK);
 
@@ -503,10 +469,9 @@ static void sec_dsim_irq_unmask(struct sec_dsim *dsim,
 }
 
 /* write 1 clear irq */
-static void sec_dsim_irq_clear(struct sec_dsim *dsim,
-				    int irq_idx)
+static void sec_dsim_irq_clear(struct sec_dsim *dsim, int irq_idx)
 {
-	uint32_t intsrc = 0;
+	unsigned int intsrc = 0;
 
 	switch (irq_idx) {
 	case PLLSTABLE:
@@ -555,8 +520,8 @@ static void sec_dsim_irq_init(struct sec_dsim *dsim)
 
 static irqreturn_t sec_dsim_irq_handler(int irq, void *data)
 {
-	uint32_t intsrc, status;
 	struct sec_dsim *dsim = data;
+	unsigned int intsrc, status;
 
 	intsrc = dsim_read(dsim, DSIM_INTSRC);
 	status = dsim_read(dsim, DSIM_STATUS);
@@ -620,25 +585,11 @@ static irqreturn_t sec_dsim_irq_handler(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static void sec_dsim_config_cmd_lpm(struct sec_dsim *dsim, bool enable)
-{
-	u32 reg;
-
-	reg = dsim_read(dsim, DSIM_ESCMODE);
-
-	if (enable)
-		reg |= ESCMODE_CMDLPDT;
-	else
-		reg &= ~ESCMODE_CMDLPDT;
-
-	dsim_write(dsim, DSIM_ESCMODE, reg);
-}
-
 static void sec_dsim_write_pl_to_sfr_fifo(struct sec_dsim *dsim,
 					  const void *payload,
 					  size_t length)
 {
-	uint32_t pl_data;
+	unsigned int pl_data;
 
 	if (!length)
 		return;
@@ -665,30 +616,28 @@ static void sec_dsim_write_pl_to_sfr_fifo(struct sec_dsim *dsim,
 	}
 }
 
-static void sec_dsim_write_ph_to_sfr_fifo(struct sec_dsim *dsim,
-					       void *header,
-					       bool use_lpm)
+static void sec_dsim_write_ph_to_sfr_fifo(struct sec_dsim *dsim, void *header,
+					  bool use_lpm)
 {
-	u32 reg;
+	/* WC MSB */
+	dsim_update(dsim, DSIM_PKTHDR, PKTHDR_DATA1_MASK,
+		    PKTHDR_DATA1(((u8 *)header)[2]));
 
-	reg = dsim_read(dsim, DSIM_PKTHDR);
+	/* WC LSB  */
+	dsim_update(dsim, DSIM_PKTHDR, PKTHDR_DATA0_MASK,
+		    PKTHDR_DATA0(((u8 *)header)[1]));
 
-	reg &= ~PKTHDR_DATA1_MASK;
-	reg |= PKTHDR_DATA1(((u8 *)header)[2]);	/* WC MSB */
-	reg &= ~PKTHDR_DATA0_MASK;
-	reg |= PKTHDR_DATA0(((u8 *)header)[1]);	/* WC LSB  */
-	reg &= ~PKTHDR_DI_MASK;
-	reg |= PKTHDR_DI(((u8 *)header)[0]);	/* Data ID */
-	dsim_write(dsim, DSIM_PKTHDR, reg);
+	/* Data ID */
+	dsim_update(dsim, DSIM_PKTHDR, PKTHDR_DI_MASK,
+		    PKTHDR_DI(((u8 *)header)[0]));
 }
 
-static int sec_dsim_read_pl_from_sfr_fifo(struct sec_dsim *dsim,
-					       void *payload,
-					       size_t length)
+static int sec_dsim_read_pl_from_sfr_fifo(struct sec_dsim *dsim, void *payload,
+					  size_t length)
 {
-	uint8_t data_type;
-	uint16_t word_count = 0;
-	uint32_t reg, ph, pl;
+	u16 word_count = 0;
+	unsigned int reg, ph, pl;
+	u8 data_type;
 
 	reg = dsim_read(dsim, DSIM_FIFOCTRL);
 
@@ -761,12 +710,12 @@ static int sec_dsim_read_pl_from_sfr_fifo(struct sec_dsim *dsim,
 }
 
 static ssize_t sec_dsim_host_transfer(struct mipi_dsi_host *host,
-					   const struct mipi_dsi_msg *msg)
+				      const struct mipi_dsi_msg *msg)
 {
-	int ret;
-	bool use_lpm;
-	struct mipi_dsi_packet packet;
 	struct sec_dsim *dsim = host_to_dsim(host);
+	struct mipi_dsi_packet packet;
+	bool use_lpm;
+	int ret;
 
 	if ((msg->rx_buf && !msg->rx_len) || (msg->rx_len && !msg->rx_buf))
 		return -EINVAL;
@@ -783,7 +732,8 @@ static ssize_t sec_dsim_host_transfer(struct mipi_dsi_host *host,
 
 	/* config LPM for CMD TX */
 	use_lpm = msg->flags & MIPI_DSI_MSG_USE_LPM ? true : false;
-	sec_dsim_config_cmd_lpm(dsim, use_lpm);
+	dsim_update(dsim, DSIM_ESCMODE, ESCMODE_CMDLPDT,
+		    use_lpm ? ESCMODE_CMDLPDT : 0);
 
 	if (packet.payload_length) {		/* Long Packet case */
 		reinit_completion(&dsim->pl_tx_done);
@@ -864,7 +814,6 @@ static void sec_dsim_video_mode(struct sec_dsim *dsim)
 	const struct dsim_hblank_par *hpar = NULL;
 	unsigned int hfp, hbp, hsa, vfp, vbp, vsa;
 	unsigned int hfp_wc, hbp_wc, hsa_wc, wc;
-	unsigned int reg;
 
 	hfp = mode->hsync_start - mode->hdisplay;
 	hbp = mode->htotal - mode->hsync_end;
@@ -881,15 +830,14 @@ static void sec_dsim_video_mode(struct sec_dsim *dsim)
 	}
 
 	/* vertical porch */
-	reg = dsim_read(dsim, DSIM_MVPORCH);
+	dsim_update(dsim, DSIM_MVPORCH, MVPORCH_MAINVBP_MASK,
+		    MVPORCH_MAINVBP(vbp));
 
-	reg &= ~MVPORCH_MAINVBP_MASK;
-	reg |= MVPORCH_MAINVBP(vbp);
-	reg &= ~MVPORCH_STABLEVFP_MASK;
-	reg |= MVPORCH_STABLEVFP(vfp);
-	reg &= ~MVPORCH_CMDALLOW_MASK;
-	reg |= MVPORCH_CMDALLOW(0x0);
-	dsim_write(dsim, DSIM_MVPORCH, reg);
+	dsim_update(dsim, DSIM_MVPORCH, MVPORCH_STABLEVFP_MASK,
+		    MVPORCH_STABLEVFP(vfp));
+
+	dsim_update(dsim, DSIM_MVPORCH, MVPORCH_CMDALLOW_MASK,
+		    MVPORCH_CMDALLOW(0x0));
 
 	if (!hpar) {
 		wc = DIV_ROUND_UP(hfp * (bpp >> 3), dsim->lanes);
@@ -904,13 +852,11 @@ static void sec_dsim_video_mode(struct sec_dsim *dsim)
 	}
 
 	/* horizontal porch */
-	reg = dsim_read(dsim, DSIM_MHPORCH);
+	dsim_update(dsim, DSIM_MHPORCH, MVPORCH_MAINHBP_MASK,
+		    MVPORCH_MAINHBP(hbp_wc));
 
-	reg &= ~MVPORCH_MAINHBP_MASK;
-	reg |= MVPORCH_MAINHBP(hbp_wc);
-	reg &= ~MVPORCH_MAINHFP_MASK;
-	reg |= MVPORCH_MAINHFP(hfp_wc);
-	dsim_write(dsim, DSIM_MHPORCH, reg);
+	dsim_update(dsim, DSIM_MHPORCH, MVPORCH_MAINHFP_MASK,
+		    MVPORCH_MAINHFP(hfp_wc));
 
 	if (!hpar) {
 		wc = DIV_ROUND_UP(hsa * (bpp >> 3), dsim->lanes);
@@ -921,126 +867,115 @@ static void sec_dsim_video_mode(struct sec_dsim *dsim)
 	}
 
 	/* sync area */
-	reg = dsim_read(dsim, DSIM_MSYNC);
+	dsim_update(dsim, DSIM_MSYNC, MVPORCH_MAINHSA_MASK,
+		    MVPORCH_MAINHSA(hsa_wc));
 
-	reg &= ~MVPORCH_MAINHSA_MASK;
-	reg |= MVPORCH_MAINHSA(hsa_wc);
-	reg &= ~MVPORCH_MAINVSA_MASK;
-	reg |= MVPORCH_MAINVSA(vsa);
-	dsim_write(dsim, DSIM_MSYNC, reg);
+	dsim_update(dsim, DSIM_MSYNC, MVPORCH_MAINVSA_MASK,
+		    MVPORCH_MAINVSA(vsa));
 }
 
 static void sec_dsim_display_mode(struct sec_dsim *dsim)
 {
 	struct drm_display_mode *mode = &dsim->mode;
-	u32 reg;
 
 	if (dsim->mode_flags & MIPI_DSI_MODE_VIDEO)
 		sec_dsim_video_mode(dsim);
 
 	/* image resolution */
-	reg = dsim_read(dsim, DSIM_MDRESOL);
+	dsim_update(dsim, DSIM_MDRESOL, MVPORCH_MAINHRESOL_MASK,
+		    MVPORCH_MAINHRESOL(mode->hdisplay));
 
-	reg &= ~MVPORCH_MAINHRESOL_MASK;
-	reg |= MVPORCH_MAINHRESOL(mode->hdisplay);
-	reg &= ~MVPORCH_MAINVRESOL_MASK;
-	reg |= MVPORCH_MAINVRESOL(mode->vdisplay);
-
-	dsim_write(dsim, DSIM_MDRESOL, reg);
+	dsim_update(dsim, DSIM_MDRESOL, MVPORCH_MAINVRESOL_MASK,
+		    MVPORCH_MAINVRESOL(mode->vdisplay));
 }
 
 static void sec_dsim_config_bridge(struct sec_dsim *dsim)
 {
 	const struct sec_dsim_plat_data *pdata = dsim->pdata;
-	u32 reg;
+	unsigned int val;
 
-	reg = dsim_read(dsim, DSIM_CONFIG);
+	val = dsim_read(dsim, DSIM_CONFIG);
 
 	if (dsim->mode_flags & MIPI_DSI_CLOCK_NON_CONTINUOUS) {
-		reg |= CONFIG_NON_CONTINUOUS_CLOCK_LANE;
-		reg |= CONFIG_CLKLANE_STOP_START;
+		val |= CONFIG_NON_CONTINUOUS_CLOCK_LANE;
+		val |= CONFIG_CLKLANE_STOP_START;
 	}
 
 	if (!(dsim->mode_flags & MIPI_DSI_MODE_VSYNC_FLUSH))
-		reg |= CONFIG_MFLUSH_VS;
+		val |= CONFIG_MFLUSH_VS;
 
 	/* disable EoT packets in HS mode */
 	if (!(dsim->mode_flags & MIPI_DSI_MODE_EOT_PACKET))
-		reg |= CONFIG_EOT_R03;
+		val |= CONFIG_EOT_R03;
 
 	if (dsim->mode_flags & MIPI_DSI_MODE_VIDEO) {
-		reg |= CONFIG_VIDEOMODE;
+		val |= CONFIG_VIDEOMODE;
 
 		if (dsim->mode_flags & MIPI_DSI_MODE_VIDEO_BURST)
-			reg |= CONFIG_BURSTMODE;
+			val |= CONFIG_BURSTMODE;
 
 		else if (dsim->mode_flags & MIPI_DSI_MODE_VIDEO_SYNC_PULSE)
-			reg |= CONFIG_SYNCINFORM;
+			val |= CONFIG_SYNCINFORM;
 
 		if (dsim->mode_flags & MIPI_DSI_MODE_VIDEO_AUTO_VERT)
-			reg |= CONFIG_AUTOMODE;
+			val |= CONFIG_AUTOMODE;
 
 		if (dsim->mode_flags & MIPI_DSI_MODE_VIDEO_HSE)
-			reg |= CONFIG_HSEDISABLEMODE;
+			val |= CONFIG_HSEDISABLEMODE;
 
 		if (!(dsim->mode_flags & MIPI_DSI_MODE_VIDEO_HFP))
-			reg |= CONFIG_HFPDISABLEMODE;
+			val |= CONFIG_HFPDISABLEMODE;
 
 		if (!(dsim->mode_flags & MIPI_DSI_MODE_VIDEO_HBP))
-			reg |= CONFIG_HBPDISABLEMODE;
+			val |= CONFIG_HBPDISABLEMODE;
 
 		if (!(dsim->mode_flags & MIPI_DSI_MODE_VIDEO_HSA))
-			reg |= CONFIG_HSADISABLEMODE;
+			val |= CONFIG_HSADISABLEMODE;
 	}
 
 	/* pixel format */
-	reg &= ~CONFIG_MAINPIXFORMAT_MASK;
+	val &= ~CONFIG_MAINPIXFORMAT_MASK;
 	if (dsim->mode_flags & MIPI_DSI_MODE_VIDEO) {
 		switch (dsim->format) {
 		case MIPI_DSI_FMT_RGB565:
-			reg |= CONFIG_MAINPIXFORMAT(0x4);
+			val |= CONFIG_MAINPIXFORMAT(0x4);
 			break;
 		case MIPI_DSI_FMT_RGB666_PACKED:
-			reg |= CONFIG_MAINPIXFORMAT(0x5);
+			val |= CONFIG_MAINPIXFORMAT(0x5);
 			break;
 		case MIPI_DSI_FMT_RGB666:
-			reg |= CONFIG_MAINPIXFORMAT(0x6);
+			val |= CONFIG_MAINPIXFORMAT(0x6);
 			break;
 		case MIPI_DSI_FMT_RGB888:
-			reg |= CONFIG_MAINPIXFORMAT(0x7);
+			val |= CONFIG_MAINPIXFORMAT(0x7);
 			break;
 		default:
-			reg |= CONFIG_MAINPIXFORMAT(0x7);
+			val |= CONFIG_MAINPIXFORMAT(0x7);
 			break;
 		}
 	}
 
 	/* number of data lanes */
-	reg &= ~CONFIG_NUMOFDATLANE_MASK;
-	reg |= CONFIG_NUMOFDATLANE(dsim->lanes - 1);
+	val &= ~CONFIG_NUMOFDATLANE_MASK;
+	val |= CONFIG_NUMOFDATLANE(dsim->lanes - 1);
 
 	/* enable data, clock lane */
-	reg &= ~CONFIG_LANEEN_MASK;
-	reg |= CONFIG_LANEEN(BIT(dsim->lanes) - 1);
-	reg |= CONFIG_CLKLANEEN;
+	val &= ~CONFIG_LANEEN_MASK;
+	val |= CONFIG_LANEEN(BIT(dsim->lanes) - 1);
+	val |= CONFIG_CLKLANEEN;
 
-	dsim_write(dsim, DSIM_CONFIG, reg);
+	dsim_write(dsim, DSIM_CONFIG, val);
 
 	/* escape mode */
-	reg = dsim_read(dsim, DSIM_ESCMODE);
-
-	reg &= ~ESCMODE_STOPSTATE_CN_MASK;
-	reg |= ESCMODE_STOPSTATE_CN(pdata->esc_stop_state_cnt);
-	dsim_write(dsim, DSIM_ESCMODE, reg);
+	dsim_update(dsim, DSIM_ESCMODE, ESCMODE_STOPSTATE_CN_MASK,
+		    ESCMODE_STOPSTATE_CN(pdata->esc_stop_state_cnt));
 
 	/* timeout */
-	reg = dsim_read(dsim, DSIM_TIMEOUT);
+	dsim_update(dsim, DSIM_TIMEOUT, TIMEOUT_LPDRTOUT_MASK,
+		    TIMEOUT_LPDRTOUT(0xffff));
 
-	reg &= ~TIMEOUT_LPDRTOUT_MASK;
-	reg |= TIMEOUT_LPDRTOUT(0xffff);
-	reg &= ~TIMEOUT_BTAOUT_MASK;
-	reg |= TIMEOUT_BTAOUT(0xff);
-	dsim_write(dsim, DSIM_TIMEOUT, reg);
+	dsim_update(dsim, DSIM_TIMEOUT, TIMEOUT_BTAOUT_MASK,
+		    TIMEOUT_BTAOUT(0xff));
 }
 
 #ifndef MHZ
@@ -1134,7 +1069,6 @@ static int sec_dsim_enable_clock(struct sec_dsim *dsim)
 	const struct sec_dsim_plat_data *pdata = dsim->pdata;
 	unsigned long hs_clk, byte_clk, esc_clk;
 	unsigned long esc_div;
-	u32 reg;
 
 	/* pll timer */
 	dsim_write(dsim, DSIM_PLLTMR, pdata->pll_timer);
@@ -1160,57 +1094,53 @@ static int sec_dsim_enable_clock(struct sec_dsim *dsim)
 		      hs_clk, byte_clk, esc_clk, esc_div);
 
 	/* clk control */
-	reg = dsim_read(dsim, DSIM_CLKCTRL);
+	dsim_update(dsim, DSIM_CLKCTRL, CLKCTRL_TXREQUESTHSCLK,
+		    CLKCTRL_TXREQUESTHSCLK);
 
-	reg |= CLKCTRL_TXREQUESTHSCLK;
-	reg |= CLKCTRL_ESCCLKEN;
-	reg &= ~CLKCTRL_PLLBYPASS;
-	reg &= ~CLKCTRL_BYTECLKSRC_MASK;
-	reg |= CLKCTRL_BYTECLKEN;
-	reg &= ~CLKCTRL_LANEESCDATAEN_MASK;
-	reg |= CLKCTRL_LANEESCDATAEN(BIT(dsim->lanes) - 1);
-	reg |= CLKCTRL_LANEESCCLKEN;
-	reg &= ~CLKCTRL_ESCPRESCALER_MASK;
-	reg |= CLKCTRL_ESCPRESCALER(esc_div);
+	dsim_update(dsim, DSIM_CLKCTRL, CLKCTRL_ESCCLKEN, CLKCTRL_ESCCLKEN);
 
-	dsim_write(dsim, DSIM_CLKCTRL, reg);
+	dsim_update(dsim, DSIM_CLKCTRL, CLKCTRL_PLLBYPASS, 0);
+
+	dsim_update(dsim, DSIM_CLKCTRL, CLKCTRL_BYTECLKSRC_MASK,
+		    CLKCTRL_BYTECLKSRC(0));
+
+	dsim_update(dsim, DSIM_CLKCTRL, CLKCTRL_BYTECLKEN, CLKCTRL_BYTECLKEN);
+
+	dsim_update(dsim, DSIM_CLKCTRL, CLKCTRL_LANEESCDATAEN_MASK,
+		    CLKCTRL_LANEESCDATAEN(BIT(dsim->lanes) - 1));
+
+	dsim_update(dsim, DSIM_CLKCTRL, CLKCTRL_LANEESCCLKEN,
+		    CLKCTRL_LANEESCCLKEN);
+
+	dsim_update(dsim, DSIM_CLKCTRL, CLKCTRL_ESCPRESCALER_MASK,
+		    CLKCTRL_ESCPRESCALER(esc_div));
 
 	return 0;
 }
 
 static void sec_dsim_fifo_enable(struct sec_dsim *dsim, bool enable)
 {
-	u32 reg;
+	dsim_update(dsim, DSIM_FIFOCTRL, FIFOCTRL_INIT_MASK, 0);
 
-	reg = dsim_read(dsim, DSIM_FIFOCTRL);
-
-	reg &= ~FIFOCTRL_INIT_MASK;
-	dsim_write(dsim, DSIM_FIFOCTRL, reg);
 	udelay(500);
 
 	if (!enable)
 		return;
 
-	reg |= FIFOCTRL_NINITRX	|
-	       FIFOCTRL_NINITSFR |
-	       FIFOCTRL_NINITI80 |
-	       FIFOCTRL_NINITSUB |
-	       FIFOCTRL_NINITMAIN;
-	dsim_write(dsim, DSIM_FIFOCTRL, reg);
+	dsim_update(dsim, DSIM_FIFOCTRL, FIFOCTRL_INIT_MASK,
+		    FIFOCTRL_NINITRX |
+		    FIFOCTRL_NINITSFR |
+		    FIFOCTRL_NINITI80 |
+		    FIFOCTRL_NINITSUB |
+		    FIFOCTRL_NINITMAIN);
+
 	udelay(500);
 }
 
 static void sec_dsim_set_display(struct sec_dsim *dsim, bool enable)
 {
-	u32 reg;
-
-	reg = dsim_read(dsim, DSIM_MDRESOL);
-
-	if (enable)
-		reg |= MDRESOL_MAINSTANDBY;
-	else
-		reg &= ~MDRESOL_MAINSTANDBY;
-	dsim_write(dsim, DSIM_MDRESOL, reg);
+	dsim_update(dsim, DSIM_MDRESOL, MDRESOL_MAINSTANDBY,
+		    enable ? MDRESOL_MAINSTANDBY : 0);
 }
 
 static void sec_dsim_bridge_enable(struct drm_bridge *bridge)
@@ -1261,23 +1191,20 @@ static void sec_dsim_bridge_enable(struct drm_bridge *bridge)
 
 static void sec_dsim_disable_clock(struct sec_dsim *dsim)
 {
-	u32 reg;
+	unsigned int val;
 
 	/* clk control */
-	reg = dsim_read(dsim, DSIM_CLKCTRL);
+	val = dsim_read(dsim, DSIM_CLKCTRL);
 
-	reg &= ~CLKCTRL_TXREQUESTHSCLK;
-	reg &= ~CLKCTRL_BYTECLKEN;
-	reg &= ~CLKCTRL_ESCCLKEN;
-	reg &= ~CLKCTRL_LANEESCDATAEN_MASK;
-	reg &= ~CLKCTRL_LANEESCCLKEN;
-	dsim_write(dsim, DSIM_CLKCTRL, reg);
+	val &= ~CLKCTRL_TXREQUESTHSCLK;
+	val &= ~CLKCTRL_BYTECLKEN;
+	val &= ~CLKCTRL_ESCCLKEN;
+	val &= ~CLKCTRL_LANEESCDATAEN_MASK;
+	val &= ~CLKCTRL_LANEESCCLKEN;
+	dsim_write(dsim, DSIM_CLKCTRL, val);
 
 	/* pll control */
-	reg  = dsim_read(dsim, DSIM_PLLCTRL);
-
-	reg &= ~PLLCTRL_PLLEN;
-	dsim_write(dsim, DSIM_PLLCTRL, reg);
+	dsim_update(dsim, DSIM_PLLCTRL, PLLCTRL_PLLEN, 0);
 }
 
 static void sec_dsim_bridge_disable(struct drm_bridge *bridge)
