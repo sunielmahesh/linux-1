@@ -1431,6 +1431,13 @@ static void exynos_dsi_bridge_enable(struct drm_bridge *bridge)
 
 	dsi->state |= DSIM_STATE_ENABLED;
 
+	if (!(dsi->state & DSIM_STATE_INITIALIZED)) {
+		ret = exynos_dsi_init(dsi);
+		if (ret)
+			return;
+		dsi->state |= DSIM_STATE_INITIALIZED;
+	}
+
 	exynos_dsi_set_display_mode(dsi);
 	exynos_dsi_set_display_enable(dsi, true);
 
@@ -1507,13 +1514,6 @@ static ssize_t exynos_dsi_host_transfer(struct mipi_dsi_host *host,
 
 	if (!(dsi->state & DSIM_STATE_ENABLED))
 		return -EINVAL;
-
-	if (!(dsi->state & DSIM_STATE_INITIALIZED)) {
-		ret = exynos_dsi_init(dsi);
-		if (ret)
-			return ret;
-		dsi->state |= DSIM_STATE_INITIALIZED;
-	}
 
 	ret = mipi_dsi_create_packet(&xfer.packet, msg);
 	if (ret < 0)
