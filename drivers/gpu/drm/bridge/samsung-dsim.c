@@ -649,7 +649,7 @@ static unsigned long exynos_dsi_set_pll(struct exynos_dsi *dsi,
 			"failed to find PLL PMS for requested frequency\n");
 		return 0;
 	}
-	dev_dbg(dsi->dev, "PLL freq %lu, (p %d, m %d, s %d)\n", fout, p, m, s);
+	dev_info(dsi->dev, "PLL freq %lu, (p %d, m %d, s %d)\n", fout, p, m, s);
 
 	regmap_write(dsi->regmap, driver_data->plltmr_reg,
 		     driver_data->reg_values[PLL_TIMER]);
@@ -669,7 +669,7 @@ static unsigned long exynos_dsi_set_pll(struct exynos_dsi *dsi,
 			if (fout < freq_bands[band])
 				break;
 
-		dev_dbg(dsi->dev, "band %d\n", band);
+		dev_info(dsi->dev, "band %d\n", band);
 
 		reg |= DSIM_FREQ_BAND(band);
 	}
@@ -709,7 +709,7 @@ static int exynos_dsi_enable_clock(struct exynos_dsi *dsi)
 		esc_clk = byte_clk / esc_div;
 	}
 
-	dev_dbg(dsi->dev, "hs_clk = %lu, byte_clk = %lu, esc_clk = %lu\n",
+	dev_info(dsi->dev, "hs_clk = %lu, byte_clk = %lu, esc_clk = %lu\n",
 		hs_clk, byte_clk, esc_clk);
 
 	reg = exynos_dsi_read(dsi, DSIM_CLKCTRL_REG);
@@ -944,7 +944,7 @@ static void exynos_dsi_set_display_mode(struct exynos_dsi *dsi)
 
 	exynos_dsi_write(dsi, DSIM_MDRESOL_REG, reg);
 
-	dev_dbg(dsi->dev, "LCD size = %dx%d\n", m->hdisplay, m->vdisplay);
+	dev_info(dsi->dev, "LCD size = %dx%d\n", m->hdisplay, m->vdisplay);
 }
 
 static void exynos_dsi_set_display_enable(struct exynos_dsi *dsi, bool enable)
