@@ -7,32 +7,26 @@
  * Contacts: Tomasz Figa <t.figa@samsung.com>
 */
 
+#include <asm/unaligned.h>
 #include <linux/clk.h>
+#include <linux/completion.h>
 #include <linux/delay.h>
-#include <linux/component.h>
-#include <linux/gpio/consumer.h>
-#include <linux/irq.h>
+#include <linux/module.h>
 #include <linux/of_device.h>
 #include <linux/of_gpio.h>
 #include <linux/of_graph.h>
 #include <linux/phy/phy.h>
 #include <linux/regmap.h>
-#include <linux/regulator/consumer.h>
-
-#include <asm/unaligned.h>
-
-#include <video/mipi_display.h>
-#include <video/videomode.h>
 
 #include <drm/drm_atomic_helper.h>
 #include <drm/drm_bridge.h>
-#include <drm/drm_fb_helper.h>
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_panel.h>
 #include <drm/drm_of.h>
 #include <drm/drm_print.h>
 #include <drm/drm_probe_helper.h>
-#include <drm/drm_simple_kms_helper.h>
+
+#include <video/mipi_display.h>
 
 /* returns true iff both arguments logically differs */
 #define NEQV(a, b) (!(a) ^ !(b))
@@ -313,69 +307,6 @@ enum reg_idx {
 	NUM_REGS
 };
 
-static inline void exynos_dsi_write(struct exynos_dsi *dsi, enum reg_idx idx,
-				    u32 val)
-{
-	regmap_write(dsi->regmap, dsi->driver_data->reg_ofs[idx], val);
-}
-
-static inline u32 exynos_dsi_read(struct exynos_dsi *dsi, enum reg_idx idx)
-{
-	unsigned int val;
-
-	regmap_read(dsi->regmap, dsi->driver_data->reg_ofs[idx], &val);
-
-	return val;
-}
-
-static const unsigned int exynos_reg_ofs[] = {
-	[DSIM_STATUS_REG] =  0x00,
-	[DSIM_SWRST_REG] =  0x04,
-	[DSIM_CLKCTRL_REG] =  0x08,
-	[DSIM_TIMEOUT_REG] =  0x0c,
-	[DSIM_CONFIG_REG] =  0x10,
-	[DSIM_ESCMODE_REG] =  0x14,
-	[DSIM_MDRESOL_REG] =  0x18,
-	[DSIM_MVPORCH_REG] =  0x1c,
-	[DSIM_MHPORCH_REG] =  0x20,
-	[DSIM_MSYNC_REG] =  0x24,
-	[DSIM_INTSRC_REG] =  0x2c,
-	[DSIM_INTMSK_REG] =  0x30,
-	[DSIM_PKTHDR_REG] =  0x34,
-	[DSIM_PAYLOAD_REG] =  0x38,
-	[DSIM_RXFIFO_REG] =  0x3c,
-	[DSIM_FIFOCTRL_REG] =  0x44,
-	[DSIM_PLLCTRL_REG] =  0x4c,
-	[DSIM_PHYCTRL_REG] =  0x5c,
-	[DSIM_PHYTIMING_REG] =  0x64,
-	[DSIM_PHYTIMING1_REG] =  0x68,
-	[DSIM_PHYTIMING2_REG] =  0x6c,
-};
-
-static const unsigned int exynos5433_reg_ofs[] = {
-	[DSIM_STATUS_REG] = 0x04,
-	[DSIM_SWRST_REG] = 0x0C,
-	[DSIM_CLKCTRL_REG] = 0x10,
-	[DSIM_TIMEOUT_REG] = 0x14,
-	[DSIM_CONFIG_REG] = 0x18,
-	[DSIM_ESCMODE_REG] = 0x1C,
-	[DSIM_MDRESOL_REG] = 0x20,
-	[DSIM_MVPORCH_REG] = 0x24,
-	[DSIM_MHPORCH_REG] = 0x28,
-	[DSIM_MSYNC_REG] = 0x2C,
-	[DSIM_INTSRC_REG] = 0x34,
-	[DSIM_INTMSK_REG] = 0x38,
-	[DSIM_PKTHDR_REG] = 0x3C,
-	[DSIM_PAYLOAD_REG] = 0x40,
-	[DSIM_RXFIFO_REG] = 0x44,
-	[DSIM_FIFOCTRL_REG] = 0x4C,
-	[DSIM_PLLCTRL_REG] = 0x94,
-	[DSIM_PHYCTRL_REG] = 0xA4,
-	[DSIM_PHYTIMING_REG] = 0xB4,
-	[DSIM_PHYTIMING1_REG] = 0xB8,
-	[DSIM_PHYTIMING2_REG] = 0xBC,
-};
-
 enum reg_value_idx {
 	RESET_TYPE,
 	PLL_TIMER,
@@ -394,162 +325,6 @@ enum reg_value_idx {
 	PHYTIMING_HS_TRAIL
 };
 
-static const unsigned int reg_values[] = {
-	[RESET_TYPE] = DSIM_SWRST,
-	[PLL_TIMER] = 500,
-	[STOP_STATE_CNT] = 0xf,
-	[PHYCTRL_ULPS_EXIT] = DSIM_PHYCTRL_ULPS_EXIT(0x0af),
-	[PHYCTRL_VREG_LP] = 0,
-	[PHYCTRL_SLEW_UP] = 0,
-	[PHYTIMING_LPX] = DSIM_PHYTIMING_LPX(0x06),
-	[PHYTIMING_HS_EXIT] = DSIM_PHYTIMING_HS_EXIT(0x0b),
-	[PHYTIMING_CLK_PREPARE] = DSIM_PHYTIMING1_CLK_PREPARE(0x07),
-	[PHYTIMING_CLK_ZERO] = DSIM_PHYTIMING1_CLK_ZERO(0x27),
-	[PHYTIMING_CLK_POST] = DSIM_PHYTIMING1_CLK_POST(0x0d),
-	[PHYTIMING_CLK_TRAIL] = DSIM_PHYTIMING1_CLK_TRAIL(0x08),
-	[PHYTIMING_HS_PREPARE] = DSIM_PHYTIMING2_HS_PREPARE(0x09),
-	[PHYTIMING_HS_ZERO] = DSIM_PHYTIMING2_HS_ZERO(0x0d),
-	[PHYTIMING_HS_TRAIL] = DSIM_PHYTIMING2_HS_TRAIL(0x0b),
-};
-
-static const unsigned int exynos5422_reg_values[] = {
-	[RESET_TYPE] = DSIM_SWRST,
-	[PLL_TIMER] = 500,
-	[STOP_STATE_CNT] = 0xf,
-	[PHYCTRL_ULPS_EXIT] = DSIM_PHYCTRL_ULPS_EXIT(0xaf),
-	[PHYCTRL_VREG_LP] = 0,
-	[PHYCTRL_SLEW_UP] = 0,
-	[PHYTIMING_LPX] = DSIM_PHYTIMING_LPX(0x08),
-	[PHYTIMING_HS_EXIT] = DSIM_PHYTIMING_HS_EXIT(0x0d),
-	[PHYTIMING_CLK_PREPARE] = DSIM_PHYTIMING1_CLK_PREPARE(0x09),
-	[PHYTIMING_CLK_ZERO] = DSIM_PHYTIMING1_CLK_ZERO(0x30),
-	[PHYTIMING_CLK_POST] = DSIM_PHYTIMING1_CLK_POST(0x0e),
-	[PHYTIMING_CLK_TRAIL] = DSIM_PHYTIMING1_CLK_TRAIL(0x0a),
-	[PHYTIMING_HS_PREPARE] = DSIM_PHYTIMING2_HS_PREPARE(0x0c),
-	[PHYTIMING_HS_ZERO] = DSIM_PHYTIMING2_HS_ZERO(0x11),
-	[PHYTIMING_HS_TRAIL] = DSIM_PHYTIMING2_HS_TRAIL(0x0d),
-};
-
-static const unsigned int exynos5433_reg_values[] = {
-	[RESET_TYPE] = DSIM_FUNCRST,
-	[PLL_TIMER] = 22200,
-	[STOP_STATE_CNT] = 0xa,
-	[PHYCTRL_ULPS_EXIT] = DSIM_PHYCTRL_ULPS_EXIT(0x190),
-	[PHYCTRL_VREG_LP] = DSIM_PHYCTRL_B_DPHYCTL_VREG_LP,
-	[PHYCTRL_SLEW_UP] = DSIM_PHYCTRL_B_DPHYCTL_SLEW_UP,
-	[PHYTIMING_LPX] = DSIM_PHYTIMING_LPX(0x07),
-	[PHYTIMING_HS_EXIT] = DSIM_PHYTIMING_HS_EXIT(0x0c),
-	[PHYTIMING_CLK_PREPARE] = DSIM_PHYTIMING1_CLK_PREPARE(0x09),
-	[PHYTIMING_CLK_ZERO] = DSIM_PHYTIMING1_CLK_ZERO(0x2d),
-	[PHYTIMING_CLK_POST] = DSIM_PHYTIMING1_CLK_POST(0x0e),
-	[PHYTIMING_CLK_TRAIL] = DSIM_PHYTIMING1_CLK_TRAIL(0x09),
-	[PHYTIMING_HS_PREPARE] = DSIM_PHYTIMING2_HS_PREPARE(0x0b),
-	[PHYTIMING_HS_ZERO] = DSIM_PHYTIMING2_HS_ZERO(0x10),
-	[PHYTIMING_HS_TRAIL] = DSIM_PHYTIMING2_HS_TRAIL(0x0c),
-};
-
-static const struct exynos_dsi_driver_data exynos3_dsi_driver_data = {
-	.reg_ofs = exynos_reg_ofs,
-	.plltmr_reg = 0x50,
-	.has_freqband = 1,
-	.has_clklane_stop = 1,
-	.num_clks = 2,
-	.max_freq = 1000,
-	.wait_for_reset = 1,
-	.num_bits_resol = 11,
-	.reg_values = reg_values,
-};
-
-static const unsigned int imx8mm_dsim_reg_values[] = {
-	[RESET_TYPE] = DSIM_SWRST,
-	[PLL_TIMER] = 500,
-	[STOP_STATE_CNT] = 0xf,
-	[PHYCTRL_ULPS_EXIT] = 0,
-	[PHYCTRL_VREG_LP] = 0,
-	[PHYCTRL_SLEW_UP] = 0,
-	[PHYTIMING_LPX] = DSIM_PHYTIMING_LPX(0x06),
-	[PHYTIMING_HS_EXIT] = DSIM_PHYTIMING_HS_EXIT(0x0b),
-	[PHYTIMING_CLK_PREPARE] = DSIM_PHYTIMING1_CLK_PREPARE(0x07),
-	[PHYTIMING_CLK_ZERO] = DSIM_PHYTIMING1_CLK_ZERO(0x26),
-	[PHYTIMING_CLK_POST] = DSIM_PHYTIMING1_CLK_POST(0x0d),
-	[PHYTIMING_CLK_TRAIL] = DSIM_PHYTIMING1_CLK_TRAIL(0x08),
-	[PHYTIMING_HS_PREPARE] = DSIM_PHYTIMING2_HS_PREPARE(0x08),
-	[PHYTIMING_HS_ZERO] = DSIM_PHYTIMING2_HS_ZERO(0x0d),
-	[PHYTIMING_HS_TRAIL] = DSIM_PHYTIMING2_HS_TRAIL(0x0b),
-};
-
-static const struct exynos_dsi_driver_data exynos4_dsi_driver_data = {
-	.reg_ofs = exynos_reg_ofs,
-	.plltmr_reg = 0x50,
-	.has_freqband = 1,
-	.has_clklane_stop = 1,
-	.num_clks = 2,
-	.max_freq = 1000,
-	.wait_for_reset = 1,
-	.num_bits_resol = 11,
-	.reg_values = reg_values,
-};
-
-static const struct exynos_dsi_driver_data exynos5_dsi_driver_data = {
-	.reg_ofs = exynos_reg_ofs,
-	.plltmr_reg = 0x58,
-	.num_clks = 2,
-	.max_freq = 1000,
-	.wait_for_reset = 1,
-	.num_bits_resol = 11,
-	.reg_values = reg_values,
-};
-
-static const struct exynos_dsi_driver_data exynos5433_dsi_driver_data = {
-	.reg_ofs = exynos5433_reg_ofs,
-	.plltmr_reg = 0xa0,
-	.has_clklane_stop = 1,
-	.num_clks = 5,
-	.max_freq = 1500,
-	.wait_for_reset = 0,
-	.num_bits_resol = 12,
-	.reg_values = exynos5433_reg_values,
-};
-
-static const struct exynos_dsi_driver_data exynos5422_dsi_driver_data = {
-	.reg_ofs = exynos5433_reg_ofs,
-	.plltmr_reg = 0xa0,
-	.has_clklane_stop = 1,
-	.num_clks = 2,
-	.max_freq = 1500,
-	.wait_for_reset = 1,
-	.num_bits_resol = 12,
-	.reg_values = exynos5422_reg_values,
-};
-
-static const struct exynos_dsi_driver_data imx8mm_dsi_driver_data = {
-	.reg_ofs = exynos5433_reg_ofs,
-	.plltmr_reg = 0xa0,
-	.has_clklane_stop = 1,
-	.num_clks = 2,
-	.max_freq = 2100,
-	.wait_for_reset = 0,
-	.num_bits_resol = 12,
-	.reg_values = imx8mm_dsim_reg_values,
-};
-
-static const struct of_device_id exynos_dsim_of_match[] = {
-	{ .compatible = "samsung,exynos3250-mipi-dsi",
-	  .data = &exynos3_dsi_driver_data },
-	{ .compatible = "samsung,exynos4210-mipi-dsi",
-	  .data = &exynos4_dsi_driver_data },
-	{ .compatible = "samsung,exynos5410-mipi-dsi",
-	  .data = &exynos5_dsi_driver_data },
-	{ .compatible = "samsung,exynos5422-mipi-dsi",
-	  .data = &exynos5422_dsi_driver_data },
-	{ .compatible = "samsung,exynos5433-mipi-dsi",
-	  .data = &exynos5433_dsi_driver_data },
-	{ .compatible = "fsl,imx8mm-mipi-dsim",
-	  .data = &imx8mm_dsi_driver_data },
-	{ }
-};
-MODULE_DEVICE_TABLE(of, exynos_dsim_of_match);
-
 static const struct regmap_config exynos_dsi_regmap_config = {
 	.reg_bits = 8,
 	.val_bits = 32,
@@ -557,6 +332,19 @@ static const struct regmap_config exynos_dsi_regmap_config = {
 	.max_register = 0xbc,
 	.name = "exynos-dsim",
 };
+
+static inline void exynos_dsi_write(struct exynos_dsi *dsi, enum reg_idx idx,
+				    u32 val)
+{
+	regmap_write(dsi->regmap, dsi->driver_data->reg_ofs[idx], val);
+}
+
+static inline u32 exynos_dsi_read(struct exynos_dsi *dsi, enum reg_idx idx)
+{
+	unsigned int val;
+
+	return regmap_read(dsi->regmap, dsi->driver_data->reg_ofs[idx], &val);
+}
 
 static void exynos_dsi_wait_for_reset(struct exynos_dsi *dsi)
 {
@@ -736,6 +524,7 @@ static void exynos_dsi_set_phy_ctrl(struct exynos_dsi *dsi)
 	if (driver_data->has_freqband)
 		return;
 
+	printk("%s: In\n", __func__);
 	/* B D-PHY: D-PHY Master & Slave Analog Block control */
 	reg = reg_values[PHYCTRL_ULPS_EXIT] | reg_values[PHYCTRL_VREG_LP] |
 		reg_values[PHYCTRL_SLEW_UP];
@@ -1354,6 +1143,7 @@ static void exynos_dsi_disable_irq(struct exynos_dsi *dsi)
 static int exynos_dsi_init(struct exynos_dsi *dsi)
 {
 	const struct exynos_dsi_driver_data *driver_data = dsi->driver_data;
+	int ret;
 
 	exynos_dsi_reset(dsi);
 	exynos_dsi_enable_irq(dsi);
@@ -1475,11 +1265,13 @@ static int exynos_dsi_host_attach(struct mipi_dsi_host *host,
 	dsi->lanes = device->lanes;
 	dsi->format = device->format;
 	dsi->mode_flags = device->mode_flags;
+//	exynos_drm_crtc_get_by_type(drm, EXYNOS_DISPLAY_TYPE_LCD)->i80_mode =
+//			!(dsi->mode_flags & MIPI_DSI_MODE_VIDEO);
 
 	mutex_unlock(&drm->mode_config.mutex);
 
-	if (drm->mode_config.poll_enabled)
-		drm_kms_helper_hotplug_event(drm);
+//	if (drm->mode_config.poll_enabled)
+//		drm_kms_helper_hotplug_event(drm);
 
 	return 0;
 }
@@ -1490,8 +1282,8 @@ static int exynos_dsi_host_detach(struct mipi_dsi_host *host,
 	struct exynos_dsi *dsi = host_to_dsi(host);
 	struct drm_device *drm = dsi->bridge.dev;
 
-	if (drm->mode_config.poll_enabled)
-		drm_kms_helper_hotplug_event(drm);
+//	if (drm->mode_config.poll_enabled)
+//		drm_kms_helper_hotplug_event(drm);
 
 	exynos_dsi_unregister_te_irq(dsi);
 
@@ -1626,10 +1418,11 @@ static int exynos_dsi_parse_dt(struct exynos_dsi *dsi)
 static int exynos_dsi_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	void __iomem *base;
 	struct exynos_dsi *dsi;
+	void __iomem *base;
 	int ret, i;
 
+	printk("%s: 0\n", __func__);
 	dsi = devm_kzalloc(dev, sizeof(*dsi), GFP_KERNEL);
 	if (!dsi)
 		return -ENOMEM;
@@ -1654,6 +1447,7 @@ static int exynos_dsi_probe(struct platform_device *pdev)
 	if (ret)
 		return dev_err_probe(dev, ret, "failed to get regulators\n");
 
+	printk("%s: 1\n", __func__);
 	dsi->clks = devm_kcalloc(dev,
 			dsi->driver_data->num_clks, sizeof(*dsi->clks),
 			GFP_KERNEL);
@@ -1676,10 +1470,12 @@ static int exynos_dsi_probe(struct platform_device *pdev)
 		}
 	}
 
+	printk("%s: 2\n", __func__);
 	base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(base))
 		return PTR_ERR(base);
 
+	printk("%s: 3\n", __func__);
 	dsi->regmap = devm_regmap_init_mmio(dev, base, &exynos_dsi_regmap_config);
 	if (IS_ERR(dsi->regmap)) {
 		ret = PTR_ERR(dsi->regmap);
@@ -1697,6 +1493,8 @@ static int exynos_dsi_probe(struct platform_device *pdev)
 	if (dsi->irq < 0)
 		return dsi->irq;
 
+	printk("%s: 4\n", __func__);
+	dsi->regmap = devm_regmap_init_mmio(dev, base, &exynos_dsi_regmap_config);
 	ret = devm_request_threaded_irq(dev, dsi->irq, NULL,
 					exynos_dsi_irq,
 					IRQF_ONESHOT | IRQF_NO_AUTOEN,
@@ -1723,9 +1521,9 @@ static int exynos_dsi_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, dsi);
 
-	drm_bridge_add(&dsi->bridge);
-
 	pm_runtime_enable(dev);
+
+	drm_bridge_add(&dsi->bridge);
 
 	printk("%s: done!\n", __func__);
 	return 0;
@@ -1813,7 +1611,224 @@ static const struct dev_pm_ops exynos_dsi_pm_ops = {
 				pm_runtime_force_resume)
 };
 
-struct platform_driver dsi_driver = {
+static const unsigned int exynos_reg_ofs[] = {
+	[DSIM_STATUS_REG] =  0x00,
+	[DSIM_SWRST_REG] =  0x04,
+	[DSIM_CLKCTRL_REG] =  0x08,
+	[DSIM_TIMEOUT_REG] =  0x0c,
+	[DSIM_CONFIG_REG] =  0x10,
+	[DSIM_ESCMODE_REG] =  0x14,
+	[DSIM_MDRESOL_REG] =  0x18,
+	[DSIM_MVPORCH_REG] =  0x1c,
+	[DSIM_MHPORCH_REG] =  0x20,
+	[DSIM_MSYNC_REG] =  0x24,
+	[DSIM_INTSRC_REG] =  0x2c,
+	[DSIM_INTMSK_REG] =  0x30,
+	[DSIM_PKTHDR_REG] =  0x34,
+	[DSIM_PAYLOAD_REG] =  0x38,
+	[DSIM_RXFIFO_REG] =  0x3c,
+	[DSIM_FIFOCTRL_REG] =  0x44,
+	[DSIM_PLLCTRL_REG] =  0x4c,
+	[DSIM_PHYCTRL_REG] =  0x5c,
+	[DSIM_PHYTIMING_REG] =  0x64,
+	[DSIM_PHYTIMING1_REG] =  0x68,
+	[DSIM_PHYTIMING2_REG] =  0x6c,
+};
+
+static const unsigned int exynos5433_reg_ofs[] = {
+	[DSIM_STATUS_REG] = 0x04,
+	[DSIM_SWRST_REG] = 0x0C,
+	[DSIM_CLKCTRL_REG] = 0x10,
+	[DSIM_TIMEOUT_REG] = 0x14,
+	[DSIM_CONFIG_REG] = 0x18,
+	[DSIM_ESCMODE_REG] = 0x1C,
+	[DSIM_MDRESOL_REG] = 0x20,
+	[DSIM_MVPORCH_REG] = 0x24,
+	[DSIM_MHPORCH_REG] = 0x28,
+	[DSIM_MSYNC_REG] = 0x2C,
+	[DSIM_INTSRC_REG] = 0x34,
+	[DSIM_INTMSK_REG] = 0x38,
+	[DSIM_PKTHDR_REG] = 0x3C,
+	[DSIM_PAYLOAD_REG] = 0x40,
+	[DSIM_RXFIFO_REG] = 0x44,
+	[DSIM_FIFOCTRL_REG] = 0x4C,
+	[DSIM_PLLCTRL_REG] = 0x94,
+	[DSIM_PHYCTRL_REG] = 0xA4,
+	[DSIM_PHYTIMING_REG] = 0xB4,
+	[DSIM_PHYTIMING1_REG] = 0xB8,
+	[DSIM_PHYTIMING2_REG] = 0xBC,
+};
+
+static const unsigned int reg_values[] = {
+	[RESET_TYPE] = DSIM_SWRST,
+	[PLL_TIMER] = 500,
+	[STOP_STATE_CNT] = 0xf,
+	[PHYCTRL_ULPS_EXIT] = DSIM_PHYCTRL_ULPS_EXIT(0x0af),
+	[PHYCTRL_VREG_LP] = 0,
+	[PHYCTRL_SLEW_UP] = 0,
+	[PHYTIMING_LPX] = DSIM_PHYTIMING_LPX(0x06),
+	[PHYTIMING_HS_EXIT] = DSIM_PHYTIMING_HS_EXIT(0x0b),
+	[PHYTIMING_CLK_PREPARE] = DSIM_PHYTIMING1_CLK_PREPARE(0x07),
+	[PHYTIMING_CLK_ZERO] = DSIM_PHYTIMING1_CLK_ZERO(0x27),
+	[PHYTIMING_CLK_POST] = DSIM_PHYTIMING1_CLK_POST(0x0d),
+	[PHYTIMING_CLK_TRAIL] = DSIM_PHYTIMING1_CLK_TRAIL(0x08),
+	[PHYTIMING_HS_PREPARE] = DSIM_PHYTIMING2_HS_PREPARE(0x09),
+	[PHYTIMING_HS_ZERO] = DSIM_PHYTIMING2_HS_ZERO(0x0d),
+	[PHYTIMING_HS_TRAIL] = DSIM_PHYTIMING2_HS_TRAIL(0x0b),
+};
+
+static const unsigned int exynos5422_reg_values[] = {
+	[RESET_TYPE] = DSIM_SWRST,
+	[PLL_TIMER] = 500,
+	[STOP_STATE_CNT] = 0xf,
+	[PHYCTRL_ULPS_EXIT] = DSIM_PHYCTRL_ULPS_EXIT(0xaf),
+	[PHYCTRL_VREG_LP] = 0,
+	[PHYCTRL_SLEW_UP] = 0,
+	[PHYTIMING_LPX] = DSIM_PHYTIMING_LPX(0x08),
+	[PHYTIMING_HS_EXIT] = DSIM_PHYTIMING_HS_EXIT(0x0d),
+	[PHYTIMING_CLK_PREPARE] = DSIM_PHYTIMING1_CLK_PREPARE(0x09),
+	[PHYTIMING_CLK_ZERO] = DSIM_PHYTIMING1_CLK_ZERO(0x30),
+	[PHYTIMING_CLK_POST] = DSIM_PHYTIMING1_CLK_POST(0x0e),
+	[PHYTIMING_CLK_TRAIL] = DSIM_PHYTIMING1_CLK_TRAIL(0x0a),
+	[PHYTIMING_HS_PREPARE] = DSIM_PHYTIMING2_HS_PREPARE(0x0c),
+	[PHYTIMING_HS_ZERO] = DSIM_PHYTIMING2_HS_ZERO(0x11),
+	[PHYTIMING_HS_TRAIL] = DSIM_PHYTIMING2_HS_TRAIL(0x0d),
+};
+
+static const unsigned int exynos5433_reg_values[] = {
+	[RESET_TYPE] = DSIM_FUNCRST,
+	[PLL_TIMER] = 22200,
+	[STOP_STATE_CNT] = 0xa,
+	[PHYCTRL_ULPS_EXIT] = DSIM_PHYCTRL_ULPS_EXIT(0x190),
+	[PHYCTRL_VREG_LP] = DSIM_PHYCTRL_B_DPHYCTL_VREG_LP,
+	[PHYCTRL_SLEW_UP] = DSIM_PHYCTRL_B_DPHYCTL_SLEW_UP,
+	[PHYTIMING_LPX] = DSIM_PHYTIMING_LPX(0x07),
+	[PHYTIMING_HS_EXIT] = DSIM_PHYTIMING_HS_EXIT(0x0c),
+	[PHYTIMING_CLK_PREPARE] = DSIM_PHYTIMING1_CLK_PREPARE(0x09),
+	[PHYTIMING_CLK_ZERO] = DSIM_PHYTIMING1_CLK_ZERO(0x2d),
+	[PHYTIMING_CLK_POST] = DSIM_PHYTIMING1_CLK_POST(0x0e),
+	[PHYTIMING_CLK_TRAIL] = DSIM_PHYTIMING1_CLK_TRAIL(0x09),
+	[PHYTIMING_HS_PREPARE] = DSIM_PHYTIMING2_HS_PREPARE(0x0b),
+	[PHYTIMING_HS_ZERO] = DSIM_PHYTIMING2_HS_ZERO(0x10),
+	[PHYTIMING_HS_TRAIL] = DSIM_PHYTIMING2_HS_TRAIL(0x0c),
+};
+
+static const unsigned int imx8mm_dsim_reg_values[] = {
+	[RESET_TYPE] = DSIM_SWRST,
+	[PLL_TIMER] = 500,
+	[STOP_STATE_CNT] = 0xf,
+	[PHYCTRL_ULPS_EXIT] = 0,
+	[PHYCTRL_VREG_LP] = 0,
+	[PHYCTRL_SLEW_UP] = 0,
+	[PHYTIMING_LPX] = DSIM_PHYTIMING_LPX(0x06),
+	[PHYTIMING_HS_EXIT] = DSIM_PHYTIMING_HS_EXIT(0x0b),
+	[PHYTIMING_CLK_PREPARE] = DSIM_PHYTIMING1_CLK_PREPARE(0x07),
+	[PHYTIMING_CLK_ZERO] = DSIM_PHYTIMING1_CLK_ZERO(0x26),
+	[PHYTIMING_CLK_POST] = DSIM_PHYTIMING1_CLK_POST(0x0d),
+	[PHYTIMING_CLK_TRAIL] = DSIM_PHYTIMING1_CLK_TRAIL(0x08),
+	[PHYTIMING_HS_PREPARE] = DSIM_PHYTIMING2_HS_PREPARE(0x08),
+	[PHYTIMING_HS_ZERO] = DSIM_PHYTIMING2_HS_ZERO(0x0d),
+	[PHYTIMING_HS_TRAIL] = DSIM_PHYTIMING2_HS_TRAIL(0x0b),
+};
+
+static const struct exynos_dsi_driver_data exynos3_dsi_driver_data = {
+	.reg_ofs = exynos_reg_ofs,
+	.plltmr_reg = 0x50,
+	.has_freqband = 1,
+	.has_clklane_stop = 1,
+	.num_clks = 2,
+	.max_freq = 1000,
+	.wait_for_reset = 1,
+	.num_bits_resol = 11,
+	.reg_values = reg_values,
+};
+
+static const struct exynos_dsi_driver_data exynos4_dsi_driver_data = {
+	.reg_ofs = exynos_reg_ofs,
+	.plltmr_reg = 0x50,
+	.has_freqband = 1,
+	.has_clklane_stop = 1,
+	.num_clks = 2,
+	.max_freq = 1000,
+	.wait_for_reset = 1,
+	.num_bits_resol = 11,
+	.reg_values = reg_values,
+};
+
+static const struct exynos_dsi_driver_data exynos5_dsi_driver_data = {
+	.reg_ofs = exynos_reg_ofs,
+	.plltmr_reg = 0x58,
+	.num_clks = 2,
+	.max_freq = 1000,
+	.wait_for_reset = 1,
+	.num_bits_resol = 11,
+	.reg_values = reg_values,
+};
+
+static const struct exynos_dsi_driver_data exynos5433_dsi_driver_data = {
+	.reg_ofs = exynos5433_reg_ofs,
+	.plltmr_reg = 0xa0,
+	.has_clklane_stop = 1,
+	.num_clks = 5,
+	.max_freq = 1500,
+	.wait_for_reset = 0,
+	.num_bits_resol = 12,
+	.reg_values = exynos5433_reg_values,
+};
+
+static const struct exynos_dsi_driver_data exynos5422_dsi_driver_data = {
+	.reg_ofs = exynos5433_reg_ofs,
+	.plltmr_reg = 0xa0,
+	.has_clklane_stop = 1,
+	.num_clks = 2,
+	.max_freq = 1500,
+	.wait_for_reset = 1,
+	.num_bits_resol = 12,
+	.reg_values = exynos5422_reg_values,
+};
+
+static const struct exynos_dsi_driver_data imx8mm_dsi_driver_data = {
+	.reg_ofs = exynos5433_reg_ofs,
+	.plltmr_reg = 0xa0,
+	.has_clklane_stop = 1,
+	.num_clks = 2,
+	.max_freq = 2100,
+	.wait_for_reset = 0,
+	.num_bits_resol = 12,
+	.reg_values = imx8mm_dsim_reg_values,
+};
+
+static const struct of_device_id exynos_dsim_of_match[] = {
+	{
+		.compatible = "samsung,exynos3250-mipi-dsi",
+		.data = &exynos3_dsi_driver_data,
+	},
+	{ 
+		.compatible = "samsung,exynos4210-mipi-dsi",
+		.data = &exynos4_dsi_driver_data,
+	},
+	{
+		.compatible = "samsung,exynos5410-mipi-dsi",
+		.data = &exynos5_dsi_driver_data,
+	},
+	{ 
+		.compatible = "samsung,exynos5422-mipi-dsi",
+		.data = &exynos5422_dsi_driver_data,
+	},
+	{
+		.compatible = "samsung,exynos5433-mipi-dsi",
+		.data = &exynos5433_dsi_driver_data,
+	},
+	{
+		.compatible = "fsl,imx8mm-mipi-dsim",
+		.data = &imx8mm_dsi_driver_data,
+	},
+	{ /* sentinel */ }
+};
+
+MODULE_DEVICE_TABLE(of, exynos_dsim_of_match);
+
+struct platform_driver exynos_dsim_driver = {
 	.probe = exynos_dsi_probe,
 	.remove = exynos_dsi_remove,
 	.driver = {
@@ -1824,9 +1839,9 @@ struct platform_driver dsi_driver = {
 	},
 };
 
-module_platform_driver(dsi_driver);
+module_platform_driver(exynos_dsim_driver);
 
 MODULE_AUTHOR("Tomasz Figa <t.figa@samsung.com>");
 MODULE_AUTHOR("Andrzej Hajda <a.hajda@samsung.com>");
-MODULE_DESCRIPTION("Samsung SoC MIPI DSI Master");
+MODULE_DESCRIPTION("Samsung MIPI DSIM bridge");
 MODULE_LICENSE("GPL v2");
