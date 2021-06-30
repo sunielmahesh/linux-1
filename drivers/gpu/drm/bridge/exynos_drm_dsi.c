@@ -33,8 +33,8 @@
 #include <drm/drm_probe_helper.h>
 #include <drm/drm_simple_kms_helper.h>
 
-#include "exynos_drm_crtc.h"
-#include "exynos_drm_drv.h"
+#include "../exynos/exynos_drm_crtc.h"
+#include "../exynos/exynos_drm_drv.h"
 
 /* returns true iff both arguments logically differs */
 #define NEQV(a, b) (!(a) ^ !(b))
