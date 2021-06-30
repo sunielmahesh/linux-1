@@ -250,6 +250,7 @@ struct exynos_dsi_driver_data {
 	unsigned int wait_for_reset;
 	unsigned int num_bits_resol;
 	const unsigned int *reg_values;
+	bool exynos_specific;
 };
 
 struct exynos_dsi {
@@ -459,6 +460,7 @@ static const struct exynos_dsi_driver_data exynos3_dsi_driver_data = {
 	.wait_for_reset = 1,
 	.num_bits_resol = 11,
 	.reg_values = reg_values,
+	.exynos_specific = true,
 };
 
 static const struct exynos_dsi_driver_data exynos4_dsi_driver_data = {
@@ -471,6 +473,7 @@ static const struct exynos_dsi_driver_data exynos4_dsi_driver_data = {
 	.wait_for_reset = 1,
 	.num_bits_resol = 11,
 	.reg_values = reg_values,
+	.exynos_specific = true,
 };
 
 static const struct exynos_dsi_driver_data exynos5_dsi_driver_data = {
@@ -481,6 +484,7 @@ static const struct exynos_dsi_driver_data exynos5_dsi_driver_data = {
 	.wait_for_reset = 1,
 	.num_bits_resol = 11,
 	.reg_values = reg_values,
+	.exynos_specific = true,
 };
 
 static const struct exynos_dsi_driver_data exynos5433_dsi_driver_data = {
@@ -492,6 +496,7 @@ static const struct exynos_dsi_driver_data exynos5433_dsi_driver_data = {
 	.wait_for_reset = 0,
 	.num_bits_resol = 12,
 	.reg_values = exynos5433_reg_values,
+	.exynos_specific = true,
 };
 
 static const struct exynos_dsi_driver_data exynos5422_dsi_driver_data = {
@@ -503,6 +508,7 @@ static const struct exynos_dsi_driver_data exynos5422_dsi_driver_data = {
 	.wait_for_reset = 1,
 	.num_bits_resol = 12,
 	.reg_values = exynos5422_reg_values,
+	.exynos_specific = true,
 };
 
 static const struct of_device_id exynos_dsi_of_match[] = {
@@ -1471,7 +1477,8 @@ static int exynos_dsi_host_attach(struct mipi_dsi_host *host,
 	 * If attached panel device is for command mode one, dsi should register
 	 * TE interrupt handler.
 	 */
-	if (!(device->mode_flags & MIPI_DSI_MODE_VIDEO)) {
+	if (dsi->driver_data->exynos_specific &&
+	    !(device->mode_flags & MIPI_DSI_MODE_VIDEO)) {
 		int ret = exynos_dsi_register_te_irq(dsi, &device->dev);
 		if (ret)
 			return ret;
@@ -1482,8 +1489,9 @@ static int exynos_dsi_host_attach(struct mipi_dsi_host *host,
 	dsi->lanes = device->lanes;
 	dsi->format = device->format;
 	dsi->mode_flags = device->mode_flags;
-	exynos_drm_crtc_get_by_type(drm, EXYNOS_DISPLAY_TYPE_LCD)->i80_mode =
-			!(dsi->mode_flags & MIPI_DSI_MODE_VIDEO);
+	if (dsi->driver_data->exynos_specific)
+		exynos_drm_crtc_get_by_type(drm, EXYNOS_DISPLAY_TYPE_LCD)->i80_mode =
+					    !(dsi->mode_flags & MIPI_DSI_MODE_VIDEO);
 
 	mutex_unlock(&drm->mode_config.mutex);
 
@@ -1502,7 +1510,8 @@ static int exynos_dsi_host_detach(struct mipi_dsi_host *host,
 	if (drm->mode_config.poll_enabled)
 		drm_kms_helper_hotplug_event(drm);
 
-	exynos_dsi_unregister_te_irq(dsi);
+	if (dsi->driver_data->exynos_specific)
+		exynos_dsi_unregister_te_irq(dsi);
 
 	return 0;
 }
@@ -1722,6 +1731,15 @@ static int exynos_dsi_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
+	if (!dsi->driver_data->exynos_specific) {
+		ret = mipi_dsi_host_register(&dsi->dsi_host);
+		if (ret) {
+			dev_err(dev, "failed to register mipi dsi host: %d\n",
+				ret);
+			return ret;
+		}
+	}
+
 	platform_set_drvdata(pdev, dsi);
 
 	pm_runtime_enable(dev);
@@ -1732,9 +1750,11 @@ static int exynos_dsi_probe(struct platform_device *pdev)
 
 	drm_bridge_add(&dsi->bridge);
 
-	ret = component_add(dev, &exynos_dsi_component_ops);
-	if (ret)
-		goto err_disable_runtime;
+	if (dsi->driver_data->exynos_specific) {
+		ret = component_add(dev, &exynos_dsi_component_ops);
+		if (ret)
+			goto err_disable_runtime;
+	}
 
 	return 0;
 
@@ -1752,7 +1772,8 @@ static int exynos_dsi_remove(struct platform_device *pdev)
 
 	pm_runtime_disable(&pdev->dev);
 
-	component_del(&pdev->dev, &exynos_dsi_component_ops);
+	if (dsi->driver_data->exynos_specific)
+		component_del(&pdev->dev, &exynos_dsi_component_ops);
 
 	return 0;
 }
