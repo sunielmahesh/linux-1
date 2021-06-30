@@ -1859,6 +1859,29 @@ struct platform_driver dsi_driver = {
 	},
 };
 
+static int __init exynos_dsim_init(void)
+{
+	int ret;
+
+	ret = platform_driver_register(&dsi_driver);
+
+	/**
+	 * Exynos drm drivers will register to platform_driver in
+	 * single instance in exynos_drm_drv.c including dsi_driver
+	 * for all Exynos platforms. However register again would
+	 * result -EBUSY so return 0 for such cases as dsi_driver
+	 * is already registered.
+	 */
+	return ret == -EBUSY ? 0 : ret;
+}
+module_init(exynos_dsim_init);
+
+static void __exit exynos_dsim_exit(void)
+{
+	platform_driver_unregister(&dsi_driver);
+}
+module_exit(exynos_dsim_exit);
+
 MODULE_AUTHOR("Tomasz Figa <t.figa@samsung.com>");
 MODULE_AUTHOR("Andrzej Hajda <a.hajda@samsung.com>");
 MODULE_DESCRIPTION("Samsung SoC MIPI DSI Master");
