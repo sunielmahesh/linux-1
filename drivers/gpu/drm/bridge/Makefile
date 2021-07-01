@@ -12,8 +12,6 @@ obj-$(CONFIG_DRM_MEGACHIPS_STDPXXXX_GE_B850V3_FW) += megachips-stdpxxxx-ge-b850v
 obj-$(CONFIG_DRM_NXP_PTN3460) += nxp-ptn3460.o
 obj-$(CONFIG_DRM_PARADE_PS8622) += parade-ps8622.o
 obj-$(CONFIG_DRM_PARADE_PS8640) += parade-ps8640.o
-obj-$(CONFIG_DRM_SAMSUNG_DSIM) += samsung-dsim.o
-obj-$(CONFIG_DRM_SEC_MIPI_DSIM) += sec-dsim.o
 obj-$(CONFIG_DRM_SIL_SII8620) += sil-sii8620.o
 obj-$(CONFIG_DRM_SII902X) += sii902x.o
 obj-$(CONFIG_DRM_SII9234) += sii9234.o
@@ -31,6 +29,8 @@ obj-$(CONFIG_DRM_TI_TFP410) += ti-tfp410.o
 obj-$(CONFIG_DRM_TI_TPD12S015) += ti-tpd12s015.o
 obj-$(CONFIG_DRM_NWL_MIPI_DSI) += nwl-dsi.o
 obj-$(CONFIG_DRM_ITE_IT66121) += ite-it66121.o
+obj-$(CONFIG_DRM_DSIM) += dsim.o
+obj-$(CONFIG_DRM_DSIM_IMX) += dsim-imx.o
 
 obj-y += analogix/
 obj-y += cadence/
